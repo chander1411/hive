@@ -572,6 +572,12 @@ const POOLS: Record<UiLanguage, Record<WorkerRole, readonly string[]>> = {
     tester: EN_TESTER,
     custom: EN_CUSTOM,
   },
+  es: {
+    coder: EN_CODER,
+    reviewer: EN_REVIEWER,
+    tester: EN_TESTER,
+    custom: EN_CUSTOM,
+  },
   zh: {
     coder: ZH_CODER,
     reviewer: ZH_REVIEWER,

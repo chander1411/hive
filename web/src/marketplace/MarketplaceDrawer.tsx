@@ -58,7 +58,8 @@ export const MarketplaceDrawer = ({
   importedNames,
 }: MarketplaceDrawerProps) => {
   const { t, language } = useI18n()
-  const { manifestState, loadAgent } = useMarketplace(language, open)
+  const marketplaceLanguage = language === 'zh' ? 'zh' : 'en'
+  const { manifestState, loadAgent } = useMarketplace(marketplaceLanguage, open)
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null)
   const [selectedAgent, setSelectedAgent] = useState<MarketplaceAgentEntry | null>(null)
   const [query, setQuery] = useState('')

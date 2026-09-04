@@ -7,6 +7,21 @@ let serverStore: Awaited<ReturnType<typeof startTestServer>>['store'] | undefine
 let workerId = ''
 const originalEnv = { ...process.env }
 
+const waitFor = async (assertion: () => void, timeoutMs = 2000) => {
+  const deadline = Date.now() + timeoutMs
+  let lastError: unknown
+  while (Date.now() <= deadline) {
+    try {
+      assertion()
+      return
+    } catch (error) {
+      lastError = error
+      await new Promise((resolve) => setTimeout(resolve, 25))
+    }
+  }
+  throw lastError
+}
+
 beforeEach(async () => {
   const server = await startTestServer()
   cleanupServer = server.close
@@ -118,6 +133,35 @@ afterEach(async () => {
 })
 
 describe('team cli with real server', () => {
+  test('team start restarts a stopped worker by name', async () => {
+    if (!serverStore) throw new Error('Expected test server store')
+    const workspaceId = process.env.HIVE_PROJECT_ID
+    if (!workspaceId) throw new Error('Expected workspace id')
+    const activeRun = serverStore.getActiveRunByAgentId(workspaceId, workerId)
+    if (!activeRun) throw new Error('Expected active worker run')
+    serverStore.stopAgentRun(activeRun.runId)
+    await waitFor(() => {
+      expect(serverStore?.getWorker(workspaceId, workerId).status).toBe('stopped')
+    })
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+
+    await runTeamCommand(['start', 'Alice'])
+
+    const payload = JSON.parse(String(logSpy.mock.calls.at(-1)?.[0])) as {
+      already_running: boolean
+      ok: boolean
+      run_id: string
+      worker_id: string
+    }
+    expect(payload).toMatchObject({
+      already_running: false,
+      ok: true,
+      run_id: expect.any(String),
+      worker_id: workerId,
+    })
+    expect(serverStore.getActiveRunByAgentId(workspaceId, workerId)).toBeDefined()
+  })
+
   test('team list prints snake_case payload from a real backend', async () => {
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
 

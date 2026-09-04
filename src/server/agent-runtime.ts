@@ -15,6 +15,7 @@ import { createAgentStdinDispatcher } from './agent-stdin-dispatcher.js'
 import { createAgentTokenRegistry } from './agent-tokens.js'
 import type { CommandPresetRecord } from './command-preset-store.js'
 import { createLiveRunRegistry } from './live-run-registry.js'
+import type { PromptLanguage } from './prompt-language.js'
 import { createNoopRestartPolicy, type RestartPolicy } from './restart-policy.js'
 
 export const createAgentRuntime = (
@@ -24,18 +25,33 @@ export const createAgentRuntime = (
   getCommandPreset: (id: string) => CommandPresetRecord | undefined,
   onAgentExit: (workspaceId: string, agentId: string) => void,
   restartPolicy: RestartPolicy = createNoopRestartPolicy(),
-  getAgent?: (workspaceId: string, agentId: string) => AgentSummary | undefined
+  getAgent?: (workspaceId: string, agentId: string) => AgentSummary | undefined,
+  getPromptLanguage: () => PromptLanguage = () => 'zh'
 ): AgentRuntime => {
   const registry = createLiveRunRegistry()
   const launchCache = createAgentLaunchCache(agentRunStore)
   const tokenRegistry = createAgentTokenRegistry()
   const startPromises = new Map<string, Promise<LiveAgentRun>>()
+  const freshStartAgents = new Set<string>()
+  const sessionGenerations = new Map<string, number>()
   let closing = false
   const requireManager = () => {
     if (!agentManager) throw new Error('Agent manager is required for PTY terminal operations')
     return agentManager
   }
   const flowAdapter = createAgentRuntimeFlowAdapter(requireManager)
+  const getAgentKey = (workspaceId: string, agentId: string) => `${workspaceId}:${agentId}`
+  const runtimeSessionStore: AgentSessionStorePort = {
+    ...sessionStore,
+    clearLastSessionId(workspaceId, agentId) {
+      const key = getAgentKey(workspaceId, agentId)
+      sessionGenerations.set(key, (sessionGenerations.get(key) ?? 0) + 1)
+      sessionStore.clearLastSessionId(workspaceId, agentId)
+    },
+    getGeneration(workspaceId, agentId) {
+      return sessionGenerations.get(getAgentKey(workspaceId, agentId)) ?? 0
+    },
+  }
 
   const syncRun = (run: LiveAgentRun) =>
     agentManager ? syncPersistedRun(run, agentManager.getRun(run.runId), agentRunStore) : run
@@ -45,20 +61,32 @@ export const createAgentRuntime = (
     getWorkspaceId: launchCache.getWorkspaceId,
     registry,
     syncRun,
+    getPromptLanguage,
   })
   const startLiveRun = createAgentRunStarter({
     agentManager,
     registry,
     onAgentExit,
     store: agentRunStore,
-    sessionStore,
+    sessionStore: runtimeSessionStore,
     tokenRegistry,
     getCommandPreset,
     getAgent,
+    getPromptLanguage,
     restartPolicy,
+    completeFreshStart: (workspaceId, agentId) => {
+      freshStartAgents.delete(getAgentKey(workspaceId, agentId))
+    },
+    isFreshStart: (workspaceId, agentId) => freshStartAgents.has(getAgentKey(workspaceId, agentId)),
   })
 
   return {
+    clearAgentFreshStart(workspaceId, agentId) {
+      freshStartAgents.delete(getAgentKey(workspaceId, agentId))
+    },
+    clearLastSessionId(workspaceId, agentId) {
+      runtimeSessionStore.clearLastSessionId(workspaceId, agentId)
+    },
     async close() {
       closing = true
       await Promise.allSettled([...startPromises.values()])
@@ -87,11 +115,17 @@ export const createAgentRuntime = (
       if (!run) throw new Error(`Live run not found: ${runId}`)
       return syncRun(run)
     },
+    getLastSessionId(workspaceId, agentId) {
+      return runtimeSessionStore.getLastSessionId(workspaceId, agentId)
+    },
     getPtyOutputBus() {
       return flowAdapter.getOutputBus()
     },
     listAgentRuns(agentId) {
       return listRunsWithFallback(registry, agentRunStore.listAgentRuns(agentId), agentId)
+    },
+    markAgentForFreshStart(workspaceId, agentId) {
+      freshStartAgents.add(getAgentKey(workspaceId, agentId))
     },
     pauseRun(runId) {
       flowAdapter.pauseRun(runId)
@@ -105,10 +139,13 @@ export const createAgentRuntime = (
     resumeRun(runId) {
       flowAdapter.resumeRun(runId)
     },
+    setLastSessionId(workspaceId, agentId, sessionId) {
+      runtimeSessionStore.setLastSessionId(workspaceId, agentId, sessionId)
+    },
     async startAgent(workspace, agentId, input) {
       if (closing) throw new Error('Agent runtime is closing')
       launchCache.setWorkspaceId(agentId, workspace.id)
-      const key = `${workspace.id}:${agentId}`
+      const key = getAgentKey(workspace.id, agentId)
       const activeRun = getActiveRunByAgent(
         registry,
         launchCache.getWorkspaceId,
@@ -134,6 +171,25 @@ export const createAgentRuntime = (
     },
     stopAgentRun(runId) {
       stopLiveRun(agentManager, registry, syncRun, runId)
+    },
+    async stopAgentAndWait(workspaceId, agentId) {
+      const key = getAgentKey(workspaceId, agentId)
+      try {
+        await startPromises.get(key)
+      } catch {
+        return
+      }
+      const activeRun = getActiveRunByAgent(
+        registry,
+        launchCache.getWorkspaceId,
+        syncRun,
+        workspaceId,
+        agentId
+      )
+      if (!activeRun) return
+      const exitEntry = registry.getExitEntry(activeRun.runId)
+      stopLiveRun(agentManager, registry, syncRun, activeRun.runId)
+      await exitEntry?.promise
     },
     validateAgentToken: tokenRegistry.validate,
     writeReportPrompt(workspaceId, workerName, _workerId, text, artifacts, input = {}) {

@@ -5,9 +5,19 @@ import { Tooltip } from '../ui/Tooltip.js'
 
 export const LanguageToggle = () => {
   const { language, setLanguage, t } = useI18n()
-  const nextLanguage = language === 'en' ? 'zh' : 'en'
-  const ariaLabel = nextLanguage === 'en' ? t('language.switchToEn') : t('language.switchToZh')
-  const currentLabel = language === 'en' ? t('language.currentEn') : t('language.currentZh')
+  const nextLanguage = language === 'en' ? 'es' : language === 'es' ? 'zh' : 'en'
+  const ariaLabel =
+    nextLanguage === 'en'
+      ? t('language.switchToEn')
+      : nextLanguage === 'es'
+        ? t('language.switchToEs')
+        : t('language.switchToZh')
+  const currentLabel =
+    language === 'en'
+      ? t('language.currentEn')
+      : language === 'es'
+        ? t('language.currentEs')
+        : t('language.currentZh')
 
   return (
     <Tooltip label={ariaLabel}>

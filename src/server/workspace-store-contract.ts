@@ -29,4 +29,5 @@ export interface WorkspaceStore {
   markTaskDispatched: (workspaceId: string, workerId: string) => void
   markTaskCancelled: (workspaceId: string, workerId: string) => void
   markTaskReported: (workspaceId: string, workerId: string) => void
+  resetAgentsForNewSession: (workspaceId: string) => void
 }

@@ -1,10 +1,15 @@
 import type { AgentManager } from './agent-manager.js'
 import type { AgentLaunchConfigInput } from './agent-run-store.js'
 import type { LiveAgentRun } from './agent-runtime-types.js'
-import { buildWorkerReminderTail, ORCHESTRATOR_REMINDER_TAIL } from './hive-team-guidance.js'
+import {
+  buildLocalizedWorkerReminderTail,
+  getOrchestratorReminderTail,
+} from './hive-team-guidance.js'
 import { PtyInactiveError } from './http-errors.js'
 import type { LiveRunRegistry } from './live-run-registry.js'
 import { createPostStartInputWriter } from './post-start-input-writer.js'
+import type { PromptLanguage } from './prompt-language.js'
+import { localizeKnownRoleDescription } from './role-templates.js'
 
 interface AgentStdinDispatcherInput {
   agentManager: AgentManager | undefined
@@ -12,64 +17,119 @@ interface AgentStdinDispatcherInput {
   getWorkspaceId: (agentId: string) => string | undefined
   registry: LiveRunRegistry
   syncRun: (run: LiveAgentRun) => LiveAgentRun
+  getPromptLanguage?: () => PromptLanguage
 }
 
 export const buildOrchestratorReportPayload = (
   workerName: string,
   text: string,
-  artifacts: string[]
+  artifacts: string[],
+  language: PromptLanguage = 'zh'
 ): string => {
-  const lines: string[] = [`[Hive 系统消息：来自 @${workerName} 的汇报]`, text]
+  const heading =
+    language === 'zh'
+      ? `[Hive 系统消息：来自 @${workerName} 的汇报]`
+      : language === 'es'
+        ? `[Mensaje del sistema Hive: reporte de @${workerName}]`
+        : `[Hive system message: report from @${workerName}]`
+  const lines: string[] = [heading, text]
   for (const artifact of artifacts) lines.push(`artifact: ${artifact}`)
-  lines.push('', ORCHESTRATOR_REMINDER_TAIL, '')
+  lines.push('', getOrchestratorReminderTail(language), '')
   return lines.join('\n')
 }
 
 export const buildOrchestratorStatusPayload = (
   workerName: string,
   text: string,
-  artifacts: string[]
+  artifacts: string[],
+  language: PromptLanguage = 'zh'
 ): string => {
-  const lines: string[] = [`[Hive 系统消息：来自 @${workerName} 的状态更新]`, text]
+  const heading =
+    language === 'zh'
+      ? `[Hive 系统消息：来自 @${workerName} 的状态更新]`
+      : language === 'es'
+        ? `[Mensaje del sistema Hive: estado de @${workerName}]`
+        : `[Hive system message: status from @${workerName}]`
+  const lines: string[] = [heading, text]
   for (const artifact of artifacts) lines.push(`artifact: ${artifact}`)
-  lines.push('', ORCHESTRATOR_REMINDER_TAIL, '')
+  lines.push('', getOrchestratorReminderTail(language), '')
   return lines.join('\n')
 }
 
-export const buildOrchestratorUserInputPayload = (text: string): string =>
-  [text, '', ORCHESTRATOR_REMINDER_TAIL, ''].join('\n')
+export const buildOrchestratorUserInputPayload = (
+  text: string,
+  language: PromptLanguage = 'zh'
+): string => [text, '', getOrchestratorReminderTail(language), ''].join('\n')
 
 export const buildWorkerDispatchPayload = (
   fromAgentName: string,
   workerDescription: string,
   dispatchId: string,
-  text: string
+  text: string,
+  language: PromptLanguage = 'zh'
+): string =>
+  language === 'zh'
+    ? [
+        `[Hive 系统消息：来自 @${fromAgentName} 的派单]`,
+        '',
+        `你的角色：${workerDescription}`,
+        '',
+        '你必须遵守：',
+        `- 完成、失败、阻塞或部分完成后，执行 \`team report "<result>" --dispatch ${dispatchId}\``,
+        '- 不要做无关的事，做完就 report',
+        '',
+        `dispatch_id: ${dispatchId}`,
+        '',
+        '任务内容：',
+        text,
+        '',
+        buildLocalizedWorkerReminderTail(dispatchId, language),
+        '',
+      ].join('\n')
+    : [
+        language === 'es'
+          ? `[Mensaje del sistema Hive: tarea de @${fromAgentName}]`
+          : `[Hive system message: task from @${fromAgentName}]`,
+        '',
+        `${language === 'es' ? 'Tu rol' : 'Your role'}: ${localizeKnownRoleDescription(
+          workerDescription,
+          language
+        )}`,
+        '',
+        language === 'es' ? 'Debes cumplir:' : 'You must:',
+        `- ${language === 'es' ? 'Al terminar, fallar o bloquearte, ejecuta' : 'When done, failed, or blocked, run'} \`team report "<result>" --dispatch ${dispatchId}\``,
+        language === 'es'
+          ? '- No hagas trabajo ajeno; reporta al terminar'
+          : '- Do not do unrelated work; report when finished',
+        '',
+        `dispatch_id: ${dispatchId}`,
+        '',
+        language === 'es' ? 'Tarea:' : 'Task:',
+        text,
+        '',
+        buildLocalizedWorkerReminderTail(dispatchId, language),
+        '',
+      ].join('\n')
+
+export const buildWorkerCancelPayload = (
+  dispatchId: string,
+  reason: string,
+  language: PromptLanguage = 'zh'
 ): string =>
   [
-    `[Hive 系统消息：来自 @${fromAgentName} 的派单]`,
+    language === 'zh'
+      ? `[Hive 系统消息：dispatch ${dispatchId} 已取消]`
+      : language === 'es'
+        ? `[Mensaje del sistema Hive: dispatch ${dispatchId} cancelado]`
+        : `[Hive system message: dispatch ${dispatchId} cancelled]`,
     '',
-    `你的角色：${workerDescription}`,
+    language === 'zh'
+      ? '请停止执行这条派单，不要再为它调用 team report。'
+      : language === 'es'
+        ? 'Detén esta tarea y no vuelvas a ejecutar team report para ella.'
+        : 'Stop this task and do not call team report for it.',
     '',
-    '你必须遵守：',
-    `- 完成、失败、阻塞或部分完成后，执行 \`team report "<result>" --dispatch ${dispatchId}\``,
-    '- 不要做无关的事，做完就 report',
-    '',
-    `dispatch_id: ${dispatchId}`,
-    '',
-    '任务内容：',
-    text,
-    '',
-    buildWorkerReminderTail(dispatchId),
-    '',
-  ].join('\n')
-
-export const buildWorkerCancelPayload = (dispatchId: string, reason: string): string =>
-  [
-    `[Hive 系统消息：dispatch ${dispatchId} 已取消]`,
-    '',
-    '请停止执行这条派单，不要再为它调用 team report。',
-    '',
-    '取消原因：',
+    language === 'zh' ? '取消原因：' : language === 'es' ? 'Motivo:' : 'Reason:',
     reason,
     '',
   ].join('\n')
@@ -80,6 +140,7 @@ export const createAgentStdinDispatcher = ({
   getWorkspaceId,
   registry,
   syncRun,
+  getPromptLanguage = () => 'zh',
 }: AgentStdinDispatcherInput) => {
   const writeToActiveAgentRun = (
     workspaceId: string,
@@ -128,7 +189,7 @@ export const createAgentStdinDispatcher = ({
       writeToActiveAgentRun(
         workspaceId,
         `${workspaceId}:orchestrator`,
-        buildOrchestratorReportPayload(workerName, text, artifacts),
+        buildOrchestratorReportPayload(workerName, text, artifacts, getPromptLanguage()),
         input
       )
     },
@@ -142,7 +203,7 @@ export const createAgentStdinDispatcher = ({
       writeToActiveAgentRun(
         workspaceId,
         `${workspaceId}:orchestrator`,
-        buildOrchestratorStatusPayload(workerName, text, artifacts),
+        buildOrchestratorStatusPayload(workerName, text, artifacts, getPromptLanguage()),
         input
       )
     },
@@ -157,7 +218,13 @@ export const createAgentStdinDispatcher = ({
       writeToActiveAgentRun(
         workspaceId,
         workerId,
-        buildWorkerDispatchPayload(fromAgentName, workerDescription, dispatchId, text),
+        buildWorkerDispatchPayload(
+          fromAgentName,
+          workerDescription,
+          dispatchId,
+          text,
+          getPromptLanguage()
+        ),
         { requireActiveRun: true }
       )
     },
@@ -171,7 +238,7 @@ export const createAgentStdinDispatcher = ({
       writeToActiveAgentRun(
         workspaceId,
         workerId,
-        buildWorkerCancelPayload(dispatchId, reason),
+        buildWorkerCancelPayload(dispatchId, reason, getPromptLanguage()),
         input
       )
     },
@@ -179,7 +246,7 @@ export const createAgentStdinDispatcher = ({
       writeToActiveAgentRun(
         workspaceId,
         `${workspaceId}:orchestrator`,
-        buildOrchestratorUserInputPayload(text)
+        buildOrchestratorUserInputPayload(text, getPromptLanguage())
       )
     },
   }

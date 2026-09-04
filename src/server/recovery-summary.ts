@@ -2,19 +2,34 @@ import type { AgentSummary, WorkspaceSummary } from '../shared/types.js'
 
 import { getHiveTeamRules } from './hive-team-guidance.js'
 import type { RecoveryMessage } from './message-log-store.js'
+import type { PromptLanguage } from './prompt-language.js'
 import { wrapSystemMessage } from './system-message.js'
 import { TASKS_RELATIVE_PATH } from './tasks-file.js'
 
 const TASKS_HEAD_LIMIT = 1536
 
-const formatUserInputs = (messages: RecoveryMessage[]) => {
+const emptyLine = (language: PromptLanguage, en: string, es: string, zh: string) =>
+  `- ${language === 'zh' ? zh : language === 'es' ? es : en}`
+
+const formatUserInputs = (messages: RecoveryMessage[], language: PromptLanguage) => {
   const userInputs = messages.filter((message) => message.type === 'user_input')
   return userInputs.length > 0
     ? userInputs.slice(-5).map((message) => `- user: ${message.text}`)
-    : ['- （最近 1 小时没有新的 user_input）']
+    : [
+        emptyLine(
+          language,
+          '(no new user input in the last hour)',
+          '(sin mensajes nuevos del usuario en la última hora)',
+          '（最近 1 小时没有新的 user_input）'
+        ),
+      ]
 }
 
-const formatTaskEvents = (messages: RecoveryMessage[], agent: AgentSummary) => {
+const formatTaskEvents = (
+  messages: RecoveryMessage[],
+  agent: AgentSummary,
+  language: PromptLanguage
+) => {
   const taskEvents = messages.filter(
     (message): message is Extract<RecoveryMessage, { type: 'send' | 'report' | 'status' }> => {
       if (agent.role === 'orchestrator') {
@@ -32,7 +47,14 @@ const formatTaskEvents = (messages: RecoveryMessage[], agent: AgentSummary) => {
         const status = message.status ? ` [${message.status}]` : ''
         return `- report <- ${message.from}${status}: ${message.text}`
       })
-    : ['- （最近没有任务事件）']
+    : [
+        emptyLine(
+          language,
+          '(no recent task events)',
+          '(sin eventos de tareas recientes)',
+          '（最近没有任务事件）'
+        ),
+      ]
 }
 
 const getOpenTaskTargets = (agent: AgentSummary, workers: AgentSummary[]) =>
@@ -41,7 +63,8 @@ const getOpenTaskTargets = (agent: AgentSummary, workers: AgentSummary[]) =>
 const formatOpenTasks = (
   messages: RecoveryMessage[],
   agent: AgentSummary,
-  workers: AgentSummary[]
+  workers: AgentSummary[],
+  language: PromptLanguage
 ) => {
   const targetAgents = getOpenTaskTargets(agent, workers).filter(
     (target) => target.role !== 'orchestrator'
@@ -70,24 +93,89 @@ const formatOpenTasks = (
     }
     if (target.pendingTaskCount > queue.length) {
       lines.push(
-        `- ${target.name}: ${target.pendingTaskCount - queue.length} 个 pending 无可恢复详情`
+        `- ${target.name}: ${target.pendingTaskCount - queue.length} ${
+          language === 'zh'
+            ? '个 pending 无可恢复详情'
+            : language === 'es'
+              ? 'pendientes sin detalles recuperables'
+              : 'pending without recoverable details'
+        }`
       )
     }
   }
 
-  return lines.length > 0 ? lines : ['- （当前没有未完成任务）']
+  return lines.length > 0
+    ? lines
+    : [emptyLine(language, '(no open tasks)', '(sin tareas pendientes)', '（当前没有未完成任务）')]
 }
 
-const formatWorkers = (workers: AgentSummary[]) => {
-  if (workers.length === 0) return ['- 当前没有其他 worker']
+const formatWorkers = (workers: AgentSummary[], language: PromptLanguage) => {
+  if (workers.length === 0) {
+    return [emptyLine(language, 'no other workers', 'no hay otros workers', '当前没有其他 worker')]
+  }
   return workers.map(
     (worker) =>
       `- ${worker.name} (${worker.role}, ${worker.status}, pending_task_count: ${worker.pendingTaskCount})`
   )
 }
 
-const getTaskSectionTitle = (agent: AgentSummary) =>
-  agent.role === 'orchestrator' ? '## 你已派出的任务' : '## 最近派给你的任务'
+const localizedCopy = (language: PromptLanguage) => {
+  if (language === 'zh') {
+    return {
+      activeWorkers: '## 当前活跃 worker',
+      continue: '请基于此继续。如果不确定，问 user。',
+      identity: (workspace: WorkspaceSummary, agent: AgentSummary) =>
+        `你是 ${workspace.name} 的 ${agent.name}（${agent.role}）。`,
+      openTasks: '## 当前未完成任务',
+      recentConversation: '## 最近 1 小时与 user 的对话',
+      restarted: '你刚被 Hive 重启了，且无法通过原生 session resume 恢复。下面是接力上下文。',
+      rules: (agent: AgentSummary) =>
+        agent.role === 'orchestrator' ? '## Hive worker 派单规则' : '## Hive worker 边界',
+      taskEvents: (agent: AgentSummary) =>
+        agent.role === 'orchestrator' ? '## 你已派出的任务' : '## 最近派给你的任务',
+      tasksState: `## 当前 ${TASKS_RELATIVE_PATH} 状态`,
+      empty: '(空)',
+    }
+  }
+  const es = language === 'es'
+  return {
+    activeWorkers: es ? '## Workers activos' : '## Active workers',
+    continue: es
+      ? 'Continúa desde aquí. Si no estás seguro, pregunta al usuario.'
+      : 'Continue from here. If unsure, ask the user.',
+    identity: (workspace: WorkspaceSummary, agent: AgentSummary) =>
+      es
+        ? `Eres ${agent.name} (${agent.role}) del workspace ${workspace.name}.`
+        : `You are ${agent.name} (${agent.role}) in the ${workspace.name} workspace.`,
+    openTasks: es ? '## Tareas pendientes' : '## Open tasks',
+    recentConversation: es
+      ? '## Conversación reciente con el usuario'
+      : '## Recent user conversation',
+    restarted: es
+      ? 'Hive acaba de reiniciarte sin poder recuperar la sesión nativa. Este es el contexto de continuidad.'
+      : 'Hive just restarted you without native session resume. This is the recovery context.',
+    rules: (agent: AgentSummary) =>
+      agent.role === 'orchestrator'
+        ? es
+          ? '## Reglas para delegar a workers'
+          : '## Hive worker dispatch rules'
+        : es
+          ? '## Límites del worker'
+          : '## Hive worker boundaries',
+    taskEvents: (agent: AgentSummary) =>
+      agent.role === 'orchestrator'
+        ? es
+          ? '## Tareas delegadas'
+          : '## Dispatched tasks'
+        : es
+          ? '## Tareas que te asignaron recientemente'
+          : '## Tasks recently assigned to you',
+    tasksState: es
+      ? `## Estado actual de ${TASKS_RELATIVE_PATH}`
+      : `## Current ${TASKS_RELATIVE_PATH} state`,
+    empty: es ? '(vacío)' : '(empty)',
+  }
+}
 
 export const buildRecoverySummary = ({
   agent,
@@ -96,6 +184,7 @@ export const buildRecoverySummary = ({
   tasksContent,
   workers,
   workspace,
+  language = 'zh',
 }: {
   agent: AgentSummary
   allTaskMessages?: RecoveryMessage[]
@@ -103,30 +192,34 @@ export const buildRecoverySummary = ({
   tasksContent: string
   workers: AgentSummary[]
   workspace: WorkspaceSummary
-}) =>
-  wrapSystemMessage(
+  language?: PromptLanguage
+}) => {
+  const copy = localizedCopy(language)
+  return wrapSystemMessage(
     [
-      `你是 ${workspace.name} 的 ${agent.name}（${agent.role}）。`,
-      '你刚被 Hive 重启了，且无法通过原生 session resume 恢复。下面是接力上下文。',
+      copy.identity(workspace, agent),
+      copy.restarted,
       '',
-      '## 最近 1 小时与 user 的对话',
-      ...formatUserInputs(messages),
+      copy.recentConversation,
+      ...formatUserInputs(messages, language),
       '',
-      getTaskSectionTitle(agent),
-      ...formatTaskEvents(messages, agent),
+      copy.taskEvents(agent),
+      ...formatTaskEvents(messages, agent, language),
       '',
-      '## 当前未完成任务',
-      ...formatOpenTasks(allTaskMessages ?? messages, agent, workers),
+      copy.openTasks,
+      ...formatOpenTasks(allTaskMessages ?? messages, agent, workers, language),
       '',
-      `## 当前 ${TASKS_RELATIVE_PATH} 状态`,
-      tasksContent.slice(0, TASKS_HEAD_LIMIT) || '(空)',
+      copy.tasksState,
+      tasksContent.slice(0, TASKS_HEAD_LIMIT) || copy.empty,
       '',
-      '## 当前活跃 worker',
-      ...formatWorkers(workers),
+      copy.activeWorkers,
+      ...formatWorkers(workers, language),
       '',
-      agent.role === 'orchestrator' ? '## Hive worker 派单规则' : '## Hive worker 边界',
-      ...getHiveTeamRules(agent),
+      copy.rules(agent),
+      ...getHiveTeamRules(agent, language),
       '',
-      '请基于此继续。如果不确定，问 user。',
-    ].join('\n')
+      copy.continue,
+    ].join('\n'),
+    language
   )
+}

@@ -8,6 +8,7 @@ import { type PickFolderResponse, pickFolder } from './fs-pick-folder.js'
 import { HttpError } from './http-errors.js'
 import { assertLocalRequest } from './local-request-guard.js'
 import { openWorkspace } from './open-target-commands.js'
+import { isPromptLanguage } from './prompt-language.js'
 import type { OpenWorkspaceService } from './route-types.js'
 import { matchRoute } from './routes.js'
 import type { RuntimeStore } from './runtime-store.js'
@@ -123,6 +124,11 @@ export const createApp = ({
 
     try {
       assertLocalRequest(request)
+
+      const requestedLanguage = request.headers['x-hive-language']
+      if (isPromptLanguage(requestedLanguage)) {
+        store.settings.setAppState('ui_language', requestedLanguage)
+      }
 
       const match = matchRoute(method, url.pathname)
       if (match) {

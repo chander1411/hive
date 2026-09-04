@@ -6,6 +6,7 @@ import { createAgentSessionStore } from './agent-session-store.js'
 import { createDispatchLedgerStore } from './dispatch-ledger-store.js'
 import { createMessageLogStore } from './message-log-store.js'
 import { seedOrchestratorLaunchConfig } from './orchestrator-launch.js'
+import { getStoredPromptLanguage } from './prompt-language.js'
 import type { PtyOutputBus } from './pty-output-bus.js'
 import { openRuntimeDatabase } from './runtime-database.js'
 import { buildRuntimeRestartPolicy } from './runtime-restart-policy.js'
@@ -16,6 +17,7 @@ import { createTeamOperations } from './team-operations.js'
 import { resolveTerminalInputProfile } from './terminal-input-profile.js'
 import { createUiAuth } from './ui-auth.js'
 import { createWorkerOutputTracker, type WorkerOutputTracker } from './worker-output-tracker.js'
+import { createWorkspaceSessionStore } from './workspace-session-store.js'
 import { createWorkspaceShellRuntime } from './workspace-shell-runtime.js'
 import { createWorkspaceStore } from './workspace-store.js'
 
@@ -34,6 +36,7 @@ export interface RuntimeStoreServices {
   uiAuth: ReturnType<typeof createUiAuth>
   workerOutputTracker: WorkerOutputTracker | null
   workspaceStore: ReturnType<typeof createWorkspaceStore>
+  workspaceSessionStore: ReturnType<typeof createWorkspaceSessionStore>
 }
 
 interface CreateRuntimeStoreServicesOptions {
@@ -65,6 +68,8 @@ export const createRuntimeStoreServices = (
   const agentRunStore = createAgentRunStore(db)
   const agentSessionStore = createAgentSessionStore(db)
   const settings = createSettingsStore(db)
+  const getPromptLanguage = () =>
+    getStoredPromptLanguage(settings.getAppState('ui_language')?.value)
   const tasksFileService = createTasksFileService()
   const tasksFileWatchCallbacks = new Set<(workspaceId: string, content: string) => void>()
   const tasksFileWatcher = createTasksFileWatcher({
@@ -78,6 +83,7 @@ export const createRuntimeStoreServices = (
   agentRunStore.markUnfinishedRunsStale()
 
   const workspaceStore = createWorkspaceStore(db, dispatchLedgerStore.listOpenDispatchKinds())
+  const workspaceSessionStore = createWorkspaceSessionStore(db)
   const startExistingWorkspaceWatches = () => {
     for (const workspace of workspaceStore.listWorkspaces()) {
       void tasksFileWatcher.start(workspace.id, workspace.path)
@@ -88,6 +94,7 @@ export const createRuntimeStoreServices = (
     messageLogStore,
     tasksFileService,
     workspaceStore,
+    getPromptLanguage,
   })
   const workerOutputTracker = options.agentManager
     ? createWorkerOutputTracker(options.agentManager.getOutputBus())
@@ -103,7 +110,8 @@ export const createRuntimeStoreServices = (
       workspaceStore.markAgentStopped(workspaceId, agentId)
     },
     restartPolicy,
-    (workspaceId, agentId) => workspaceStore.getAgent(workspaceId, agentId)
+    (workspaceId, agentId) => workspaceStore.getAgent(workspaceId, agentId),
+    getPromptLanguage
   )
   const teamOps = createTeamOperations({
     agentRuntime,
@@ -135,6 +143,7 @@ export const createRuntimeStoreServices = (
     uiAuth,
     workerOutputTracker,
     workspaceStore,
+    workspaceSessionStore,
   }
 }
 

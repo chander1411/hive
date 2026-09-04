@@ -10,6 +10,8 @@ interface StartAgentOptions {
 }
 
 export interface AgentRuntime {
+  clearAgentFreshStart: (workspaceId: string, agentId: string) => void
+  clearLastSessionId: (workspaceId: string, agentId: string) => void
   close: () => Promise<void>
   configureAgentLaunch: (
     workspaceId: string,
@@ -18,6 +20,7 @@ export interface AgentRuntime {
   ) => void
   deleteAgentLaunchConfig: (workspaceId: string, agentId: string) => void
   getActiveRunByAgentId: (workspaceId: string, agentId: string) => LiveAgentRun | undefined
+  getLastSessionId: (workspaceId: string, agentId: string) => string | undefined
   peekAgentLaunchConfig: (
     workspaceId: string,
     agentId: string
@@ -25,16 +28,19 @@ export interface AgentRuntime {
   getLiveRun: (runId: string) => LiveAgentRun
   getPtyOutputBus: () => PtyOutputBus
   listAgentRuns: (agentId: string) => PersistedAgentRun[]
+  markAgentForFreshStart: (workspaceId: string, agentId: string) => void
   pauseRun: (runId: string) => void
   peekAgentToken: (agentId: string) => string | undefined
   resizeAgentRun: (runId: string, cols: number, rows: number) => void
   resumeRun: (runId: string) => void
+  setLastSessionId: (workspaceId: string, agentId: string, sessionId: string) => void
   startAgent: (
     workspace: WorkspaceSummary,
     agentId: string,
     input: StartAgentOptions
   ) => Promise<LiveAgentRun>
   stopAgentRun: (runId: string) => void
+  stopAgentAndWait: (workspaceId: string, agentId: string) => Promise<void>
   validateAgentToken: AgentTokenRegistry['validate']
   writeReportPrompt: (
     workspaceId: string,

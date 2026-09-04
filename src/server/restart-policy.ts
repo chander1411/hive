@@ -33,6 +33,7 @@ export const createRestartPolicy = ({
   listAgentRuns,
   listMessagesForRecovery,
   readTasks,
+  getPromptLanguage = () => 'zh',
 }: RestartPolicyInput): RestartPolicy => ({
   injectPostStartMessage({ agentId, runId, startConfig, workspace, writeToRun }) {
     const previousRun = findPreviousRun(listAgentRuns(agentId), runId)
@@ -55,6 +56,7 @@ export const createRestartPolicy = ({
       tasksContent,
       workers,
       workspace,
+      language: getPromptLanguage(),
     })
     writeSystemMessage({
       deleteMessage,

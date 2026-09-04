@@ -28,7 +28,7 @@ afterEach(() => {
 })
 
 describe('UI language switcher', () => {
-  test('switches shell copy to Chinese and persists the choice', () => {
+  test('cycles through Spanish and Chinese and persists the choice', () => {
     render(
       <AppProviders>
         <Topbar version="0.6.0-alpha.5" versionInfo={versionInfo} />
@@ -37,7 +37,11 @@ describe('UI language switcher', () => {
     )
 
     expect(screen.getByText('Welcome to Hive')).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: 'Switch language to 中文' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Switch language to Español' }))
+
+    expect(screen.getByText('Te damos la bienvenida a Hive')).toBeInTheDocument()
+    expect(window.localStorage.getItem(UI_LANGUAGE_STORAGE_KEY)).toBe('es')
+    fireEvent.click(screen.getByRole('button', { name: 'Cambiar idioma a 中文' }))
 
     expect(screen.getByText('欢迎使用 Hive')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /添加第一个 Workspace/ })).toBeInTheDocument()
@@ -56,7 +60,10 @@ describe('UI language switcher', () => {
       </AppProviders>
     )
 
-    fireEvent.click(screen.getByRole('button', { name: 'Switch language to 中文' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Switch language to Español' }))
+
+    expect(screen.getByText('Te damos la bienvenida a Hive')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Cambiar idioma a 中文' }))
 
     expect(screen.getByText('欢迎使用 Hive')).toBeInTheDocument()
   })

@@ -15,6 +15,7 @@ import {
   markTaskCancelled,
   markTaskDispatched,
   markTaskReported,
+  resetAgentsForNewSession,
 } from './workspace-store-mutations.js'
 import {
   createOrchestrator,
@@ -82,6 +83,7 @@ export const createWorkspaceStore = (
       const workspace = getWorkspace(workspaceId)
       const agentIds = workspace.agents.map((agent) => agent.id)
       db.transaction(() => {
+        db.prepare('DELETE FROM workspace_sessions WHERE workspace_id = ?').run(workspaceId)
         db.prepare('DELETE FROM messages WHERE workspace_id = ?').run(workspaceId)
         db.prepare('DELETE FROM agent_launch_configs WHERE workspace_id = ?').run(workspaceId)
         db.prepare('DELETE FROM agent_sessions WHERE workspace_id = ?').run(workspaceId)
@@ -167,5 +169,6 @@ export const createWorkspaceStore = (
       markTaskCancelled(workspaces, workspaceId, workerId),
     markTaskReported: (workspaceId, workerId) =>
       markTaskReported(workspaces, workspaceId, workerId),
+    resetAgentsForNewSession: (workspaceId) => resetAgentsForNewSession(workspaces, workspaceId),
   }
 }

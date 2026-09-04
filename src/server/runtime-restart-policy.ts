@@ -1,5 +1,6 @@
 import type { AgentRunStorePort } from './agent-runtime-ports.js'
 import type { MessageLogHandle, MessageLogRecord, RecoveryMessage } from './message-log-store.js'
+import type { PromptLanguage } from './prompt-language.js'
 import { createRestartPolicy } from './restart-policy.js'
 import type { TasksFileService } from './tasks-file.js'
 import type { WorkspaceStore } from './workspace-store.js'
@@ -10,6 +11,7 @@ export const buildRuntimeRestartPolicy = ({
   messageLogStore,
   tasksFileService,
   workspaceStore,
+  getPromptLanguage,
 }: {
   agentRunStore: Pick<AgentRunStorePort, 'listAgentRuns'>
   messageLogStore: {
@@ -19,6 +21,7 @@ export const buildRuntimeRestartPolicy = ({
   }
   tasksFileService: Pick<TasksFileService, 'readTasks'>
   workspaceStore: Pick<WorkspaceStore, 'getWorkspaceSnapshot'>
+  getPromptLanguage: () => PromptLanguage
 }) =>
   createRestartPolicy({
     deleteMessage: messageLogStore.deleteMessage,
@@ -27,4 +30,5 @@ export const buildRuntimeRestartPolicy = ({
     listAgentRuns: agentRunStore.listAgentRuns,
     listMessagesForRecovery: messageLogStore.listMessagesForRecovery,
     readTasks: tasksFileService.readTasks,
+    getPromptLanguage,
   })

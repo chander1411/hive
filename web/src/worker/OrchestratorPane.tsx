@@ -1,8 +1,11 @@
-import { Copy, Crown, LoaderCircle, Play, RotateCcw } from 'lucide-react'
+import * as Dialog from '@radix-ui/react-dialog'
+import { Copy, Crown, FilePlus2, History, LoaderCircle, Play, RotateCcw } from 'lucide-react'
 import { useState } from 'react'
+import type { WorkspaceSessionSummary } from '../api.js'
 import { useI18n } from '../i18n.js'
 import { EmptyState } from '../ui/EmptyState.js'
 import { Tooltip } from '../ui/Tooltip.js'
+import { SessionManagerDialog } from './SessionManagerDialog.js'
 
 export type OrchestratorPaneState =
   | { kind: 'starting' }
@@ -17,6 +20,12 @@ type OrchestratorPaneProps = {
   onRemoveWorkspace: () => void
   onStart: () => void
   onRestart: () => void
+  onDeleteSession: (sessionId: string) => Promise<void>
+  onNewSession: (name?: string) => void
+  newSessionPending: boolean
+  onSwitchSession: (sessionId: string) => void
+  sessions: WorkspaceSessionSummary[]
+  sessionSwitchPending: boolean
 }
 
 const StartingBody = () => {
@@ -140,30 +149,131 @@ const FailedBody = ({
 
 export const OrchestratorPane = ({
   state,
+  newSessionPending,
+  onDeleteSession,
+  onNewSession,
+  onSwitchSession,
+  sessions,
+  sessionSwitchPending,
   onRemoveWorkspace,
   onRestart,
   onStart,
-}: OrchestratorPaneProps) => (
-  <div
-    className="relative flex h-full w-full min-w-0 flex-col"
-    style={{
-      background: 'var(--bg-crust)',
-      borderRight: '1px solid var(--border)',
-    }}
-    data-testid="orchestrator-terminal-slot"
-  >
-    {state.kind === 'running' ? (
-      <div
-        id={`orch-pty-${state.runId}`}
-        className="flex h-full w-full"
-        data-pty-slot="orchestrator"
-      />
-    ) : state.kind === 'failed' ? (
-      <FailedBody error={state.error} onRemoveWorkspace={onRemoveWorkspace} onRestart={onRestart} />
-    ) : state.kind === 'stopped' ? (
-      <StoppedBody onStart={onStart} />
-    ) : (
-      <StartingBody />
-    )}
-  </div>
-)
+}: OrchestratorPaneProps) => {
+  const { t } = useI18n()
+  const [confirmNewSession, setConfirmNewSession] = useState(false)
+  const [manageSessions, setManageSessions] = useState(false)
+  const [sessionName, setSessionName] = useState('')
+  const activeSession = sessions.find((session) => session.active)
+  return (
+    <div
+      className="relative flex h-full w-full min-w-0 flex-col"
+      style={{
+        background: 'var(--bg-crust)',
+        borderRight: '1px solid var(--border)',
+      }}
+      data-testid="orchestrator-terminal-slot"
+    >
+      {state.kind !== 'starting' ? (
+        <div
+          className="absolute right-2 top-2 z-10 flex items-center gap-1"
+          data-testid="orchestrator-session-actions"
+        >
+          <button
+            aria-label={t('orchestrator.manageSessions')}
+            className="icon-btn"
+            data-testid="orchestrator-session-manager"
+            disabled={sessionSwitchPending || newSessionPending}
+            onClick={() => setManageSessions(true)}
+            type="button"
+          >
+            <History size={12} aria-hidden /> {activeSession?.name ?? t('orchestrator.sessions')}
+          </button>
+          <button
+            type="button"
+            className="icon-btn"
+            data-testid="orchestrator-new-session"
+            disabled={newSessionPending || sessionSwitchPending}
+            onClick={() => setConfirmNewSession(true)}
+          >
+            {newSessionPending ? (
+              <LoaderCircle size={12} className="animate-spin" aria-hidden />
+            ) : (
+              <FilePlus2 size={12} aria-hidden />
+            )}
+            {t('orchestrator.newSession')}
+          </button>
+        </div>
+      ) : null}
+      {state.kind === 'running' ? (
+        <div
+          id={`orch-pty-${state.runId}`}
+          className="flex h-full w-full"
+          data-pty-slot="orchestrator"
+        />
+      ) : state.kind === 'failed' ? (
+        <FailedBody
+          error={state.error}
+          onRemoveWorkspace={onRemoveWorkspace}
+          onRestart={onRestart}
+        />
+      ) : state.kind === 'stopped' ? (
+        <StoppedBody onStart={onStart} />
+      ) : (
+        <StartingBody />
+      )}
+      <Dialog.Root open={confirmNewSession} onOpenChange={setConfirmNewSession}>
+        <Dialog.Portal>
+          <Dialog.Overlay className="app-overlay fixed inset-0 z-40" />
+          <div className="pointer-events-none fixed inset-0 z-50 grid place-items-center p-4">
+            <Dialog.Content
+              className="dialog-scale-pop elev-2 pointer-events-auto w-[440px] max-w-[calc(100vw-32px)] rounded-lg border p-5"
+              data-testid="new-session-dialog"
+              style={{ background: 'var(--bg-elevated)', borderColor: 'var(--border-bright)' }}
+            >
+              <Dialog.Title className="text-lg font-semibold text-pri">
+                {t('orchestrator.newSessionConfirmTitle')}
+              </Dialog.Title>
+              <Dialog.Description className="mt-1.5 whitespace-pre-line text-sm text-sec">
+                {t('orchestrator.newSessionConfirmDescription')}
+              </Dialog.Description>
+              <label className="mt-4 block text-xs text-sec">
+                {t('orchestrator.sessionName')}
+                <input
+                  className="mt-1 w-full rounded border bg-transparent px-3 py-2 text-sm text-pri outline-none"
+                  data-testid="new-session-name"
+                  maxLength={120}
+                  onChange={(event) => setSessionName(event.target.value)}
+                  placeholder={t('orchestrator.sessionNamePlaceholder')}
+                  value={sessionName}
+                />
+              </label>
+              <div className="mt-5 flex justify-end gap-2">
+                <Dialog.Close className="icon-btn">{t('common.cancel')}</Dialog.Close>
+                <button
+                  className="icon-btn icon-btn--primary"
+                  data-testid="new-session-submit"
+                  onClick={() => {
+                    onNewSession(sessionName.trim() || undefined)
+                    setSessionName('')
+                    setConfirmNewSession(false)
+                  }}
+                  type="button"
+                >
+                  {t('orchestrator.startNewSession')}
+                </button>
+              </div>
+            </Dialog.Content>
+          </div>
+        </Dialog.Portal>
+      </Dialog.Root>
+      {manageSessions ? (
+        <SessionManagerDialog
+          onClose={() => setManageSessions(false)}
+          onDelete={onDeleteSession}
+          onSwitch={onSwitchSession}
+          sessions={sessions}
+        />
+      ) : null}
+    </div>
+  )
+}

@@ -11,6 +11,7 @@ import type { AgentTokenRegistry } from './agent-tokens.js'
 import type { CommandPresetRecord } from './command-preset-store.js'
 import type { LiveRunRegistry } from './live-run-registry.js'
 import { createPostStartInputWriter, isInteractiveAgentCommand } from './post-start-input-writer.js'
+import type { PromptLanguage } from './prompt-language.js'
 import type { RestartPolicy } from './restart-policy.js'
 
 interface AgentRunStarterInput {
@@ -22,7 +23,10 @@ interface AgentRunStarterInput {
   tokenRegistry: AgentTokenRegistry
   getCommandPreset: (id: string) => CommandPresetRecord | undefined
   getAgent: ((workspaceId: string, agentId: string) => AgentSummary | undefined) | undefined
+  getPromptLanguage: () => PromptLanguage
   restartPolicy: RestartPolicy
+  completeFreshStart: (workspaceId: string, agentId: string) => void
+  isFreshStart: (workspaceId: string, agentId: string) => boolean
 }
 
 export const createAgentRunStarter =
@@ -35,7 +39,10 @@ export const createAgentRunStarter =
     tokenRegistry,
     getCommandPreset,
     getAgent,
+    getPromptLanguage,
     restartPolicy,
+    completeFreshStart,
+    isFreshStart,
   }: AgentRunStarterInput) =>
   async (
     workspace: WorkspaceSummary,
@@ -46,13 +53,15 @@ export const createAgentRunStarter =
     if (!agentManager) throw new Error('Agent manager is required to start agents')
 
     const agent = getAgent?.(workspace.id, agentId)
+    const freshStart = isFreshStart(workspace.id, agentId)
     const { sessionCaptureSnapshot, startConfig, startEnv } = buildAgentRunBootstrap(
       workspace,
       agentId,
       config,
       sessionStore,
       getCommandPreset,
-      agent
+      agent,
+      freshStart
     )
     const handledRunExits = new Set<string>()
     const abortedRunIds = new Set<string>()
@@ -143,25 +152,31 @@ export const createAgentRunStarter =
     )
     queueMicrotask(() => {
       try {
-        const injectedRestartMessage = restartPolicy.injectPostStartMessage({
-          agentId,
-          runId: run.runId,
-          startConfig,
-          workspace,
-          writeToRun: postStartWriter,
-        })
+        const injectedRestartMessage = freshStart
+          ? false
+          : restartPolicy.injectPostStartMessage({
+              agentId,
+              runId: run.runId,
+              startConfig,
+              workspace,
+              writeToRun: postStartWriter,
+            })
         if (
           !startConfig.resumedSessionId &&
           !injectedRestartMessage &&
           agent &&
           isInteractiveAgentCommand(startConfig.interactiveCommand ?? startConfig.command)
         ) {
-          postStartWriter(run.runId, buildAgentStartupInstructions({ agent, workspace }))
+          postStartWriter(
+            run.runId,
+            buildAgentStartupInstructions({ agent, workspace, language: getPromptLanguage() })
+          )
         }
       } catch {
         // The agent may have exited before post-start guidance could be written.
       }
     })
+    if (freshStart) completeFreshStart(workspace.id, agentId)
 
     if (registry.hasPendingExitCode(run.runId)) {
       const exitCode = registry.getPendingExitCode(run.runId) ?? null

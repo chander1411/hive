@@ -54,6 +54,7 @@ describe('team prompt contract', () => {
 
     const store = createRuntimeStore({ agentManager: createAgentManager(), dataDir })
     stores.push(store)
+    store.settings.setAppState('ui_language', 'zh')
     const workspace = store.createWorkspace(workspacePath, 'Alpha')
     const orchestrator = store.getWorkspaceSnapshot(workspace.id).agents[0]
     if (!orchestrator) {
@@ -128,6 +129,7 @@ describe('team prompt contract', () => {
 
     const store = createRuntimeStore({ agentManager: createAgentManager(), dataDir })
     stores.push(store)
+    store.settings.setAppState('ui_language', 'zh')
     const workspace = store.createWorkspace(workspacePath, 'Alpha')
     const orchestrator = store.getWorkspaceSnapshot(workspace.id).agents[0]
     if (!orchestrator) {
@@ -194,6 +196,7 @@ describe('team prompt contract', () => {
 
     const store = createRuntimeStore({ agentManager: createAgentManager(), dataDir })
     stores.push(store)
+    store.settings.setAppState('ui_language', 'zh')
     const workspace = store.createWorkspace(workspacePath, 'Alpha')
     const orchestrator = store.getWorkspaceSnapshot(workspace.id).agents[0]
     if (!orchestrator) {
@@ -265,6 +268,7 @@ describe('team prompt contract', () => {
 
     const store = createRuntimeStore({ agentManager: createAgentManager(), dataDir })
     stores.push(store)
+    store.settings.setAppState('ui_language', 'zh')
     const workspace = store.createWorkspace(workspacePath, 'Alpha')
     const orchestrator = store.getWorkspaceSnapshot(workspace.id).agents[0]
     if (!orchestrator) {

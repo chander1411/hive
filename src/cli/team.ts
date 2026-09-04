@@ -20,6 +20,7 @@ interface HiveEnv {
 const TEAM_USAGE = [
   'Usage:',
   '  team list',
+  '  team start <worker-name>',
   '  team send <worker-name> "<task>"',
   '  team cancel --dispatch <dispatch-id> "<reason>"',
   '  team report "<result>" [--dispatch <dispatch-id>] [--artifact <path>]',
@@ -319,6 +320,24 @@ export const runTeamCommand = async (argv: string[]) => {
       token: env.HIVE_AGENT_TOKEN,
       to: workerName,
       text: task,
+    })
+    console.log(JSON.stringify(await response.json()))
+    return
+  }
+
+  if (command === 'start') {
+    const [workerName, ...extraArgs] = args
+    if (!workerName || extraArgs.length > 0 || uuidPattern.test(workerName)) {
+      throw new Error('Usage: team start <worker-name>')
+    }
+
+    const env = getHiveEnv()
+    const baseUrl = getBaseUrl(env)
+    const response = await postJson(baseUrl, '/api/team/start', {
+      project_id: env.HIVE_PROJECT_ID,
+      from_agent_id: env.HIVE_AGENT_ID,
+      token: env.HIVE_AGENT_TOKEN,
+      worker_name: workerName,
     })
     console.log(JSON.stringify(await response.json()))
     return

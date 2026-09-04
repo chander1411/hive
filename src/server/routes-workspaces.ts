@@ -33,6 +33,17 @@ const getSerializedWorker = (workspaceId: string, workerId: string, store: Runti
 
 const getRuntimePort = (request: IncomingMessage) => String(request.socket.localPort ?? '')
 
+const serializeWorkspaceSession = (
+  session: ReturnType<RuntimeStore['listWorkspaceSessions']>[number]
+) => ({
+  active: session.active,
+  created_at: session.createdAt,
+  id: session.id,
+  name: session.name,
+  updated_at: session.updatedAt,
+  workspace_id: session.workspaceId,
+})
+
 export const workspaceRoutes: RouteDefinition[] = [
   route('GET', '/api/workspaces', ({ request, response, store }) => {
     requireUiTokenFromRequest(request, store.validateUiToken)
@@ -88,6 +99,101 @@ export const workspaceRoutes: RouteDefinition[] = [
     response.statusCode = 204
     response.end()
   }),
+  route(
+    'POST',
+    '/api/workspaces/:workspaceId/new-session',
+    async ({ params, request, response, store }) => {
+      const workspaceId = getRequiredParam(
+        response,
+        params,
+        'workspaceId',
+        'Workspace id is required'
+      )
+      if (!workspaceId) return
+
+      requireUiTokenFromRequest(request, store.validateUiToken)
+      const hasBody =
+        Number(request.headers['content-length'] ?? 0) > 0 ||
+        request.headers['transfer-encoding'] !== undefined
+      const body = hasBody ? await readJsonBody<{ name?: unknown }>(request) : {}
+      const name = typeof body.name === 'string' ? body.name.trim() : ''
+      if (name.length > 120) {
+        sendJson(response, 400, { error: 'Session name must be 120 characters or fewer' })
+        return
+      }
+      const orchestratorId = getOrchestratorId(workspaceId)
+      if (!store.peekAgentLaunchConfig(workspaceId, orchestratorId)) {
+        seedOrchestratorLaunchConfig(store, store.settings, workspaceId)
+      }
+      const result = await store.startNewSession(workspaceId, {
+        hivePort: getRuntimePort(request),
+        ...(name ? { name } : {}),
+      })
+      sendJson(response, 201, {
+        archived_tasks_path: result.archivedTasksPath,
+        run_id: result.run.runId,
+        session: serializeWorkspaceSession(result.session),
+      })
+    }
+  ),
+  route(
+    'DELETE',
+    '/api/workspaces/:workspaceId/sessions/:sessionId',
+    ({ params, request, response, store }) => {
+      const workspaceId = getRequiredParam(
+        response,
+        params,
+        'workspaceId',
+        'Workspace id is required'
+      )
+      const sessionId = getRequiredParam(response, params, 'sessionId', 'Session id is required')
+      if (!workspaceId || !sessionId) return
+
+      requireUiTokenFromRequest(request, store.validateUiToken)
+      store.deleteWorkspaceSession(workspaceId, sessionId)
+      response.statusCode = 204
+      response.end()
+    }
+  ),
+  route('GET', '/api/workspaces/:workspaceId/sessions', ({ params, request, response, store }) => {
+    const workspaceId = getRequiredParam(
+      response,
+      params,
+      'workspaceId',
+      'Workspace id is required'
+    )
+    if (!workspaceId) return
+
+    requireUiTokenFromRequest(request, store.validateUiToken)
+    sendJson(response, 200, store.listWorkspaceSessions(workspaceId).map(serializeWorkspaceSession))
+  }),
+  route(
+    'POST',
+    '/api/workspaces/:workspaceId/sessions/:sessionId/activate',
+    async ({ params, request, response, store }) => {
+      const workspaceId = getRequiredParam(
+        response,
+        params,
+        'workspaceId',
+        'Workspace id is required'
+      )
+      const sessionId = getRequiredParam(response, params, 'sessionId', 'Session id is required')
+      if (!workspaceId || !sessionId) return
+
+      requireUiTokenFromRequest(request, store.validateUiToken)
+      const orchestratorId = getOrchestratorId(workspaceId)
+      if (!store.peekAgentLaunchConfig(workspaceId, orchestratorId)) {
+        seedOrchestratorLaunchConfig(store, store.settings, workspaceId)
+      }
+      const result = await store.switchWorkspaceSession(workspaceId, sessionId, {
+        hivePort: getRuntimePort(request),
+      })
+      sendJson(response, 200, {
+        run_id: result.run.runId,
+        session: serializeWorkspaceSession(result.session),
+      })
+    }
+  ),
   route('GET', '/api/ui/workspaces/:workspaceId/team', ({ params, request, response, store }) => {
     const workspaceId = getRequiredParam(
       response,

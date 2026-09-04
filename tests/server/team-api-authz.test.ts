@@ -140,6 +140,31 @@ describe('team API authz (R1.4)', () => {
     }
   })
 
+  test('rejects worker that invokes /api/team/start (403)', async () => {
+    const ctx = await setupHive()
+    try {
+      const workerToken = ctx.hive.store.peekAgentToken(ctx.worker.id)
+      if (!workerToken) throw new Error('Expected worker token after start')
+      const response = await fetch(`${ctx.baseUrl}/api/team/start`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          project_id: ctx.workspaceId,
+          from_agent_id: ctx.worker.id,
+          token: workerToken,
+          worker_name: 'Alice',
+        }),
+      })
+
+      expect(response.status).toBe(403)
+      expect(await response.json()).toEqual({
+        error: "Role 'coder' is not allowed to run team start",
+      })
+    } finally {
+      await ctx.hive.close()
+    }
+  })
+
   test('rejects anonymous caller that invokes CLI team list endpoint (401)', async () => {
     const ctx = await setupHive()
     try {

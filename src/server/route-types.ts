@@ -19,6 +19,13 @@ export interface SendTaskBody {
   text: string
 }
 
+export interface StartWorkerBody {
+  project_id: string
+  from_agent_id: string
+  token?: string
+  worker_name: string
+}
+
 export interface ReportTaskBody {
   dispatch_id?: string
   project_id: string

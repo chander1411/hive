@@ -19,6 +19,7 @@ describe('team cli help', () => {
     const output = logSpy.mock.calls.map((call) => call.join(' ')).join('\n')
     expect(output).toContain('Usage:')
     expect(output).toContain('team list')
+    expect(output).toContain('team start <worker-name>')
     expect(output).toContain('team send <worker-name> "<task>"')
     expect(output).toContain('team cancel --dispatch <dispatch-id> "<reason>"')
     expect(output).toContain('team report "<result>"')

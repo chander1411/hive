@@ -105,6 +105,17 @@ const requestWithHeaders = async (
 }
 
 describe('runtime http app', () => {
+  test('persists the UI language header for runtime prompt generation', async () => {
+    const { store, baseUrl } = await startServer()
+
+    const response = await fetch(`${baseUrl}/api/ui/session`, {
+      headers: { 'x-hive-language': 'es' },
+    })
+
+    expect(response.status).toBe(200)
+    expect(store.settings.getAppState('ui_language')?.value).toBe('es')
+  })
+
   test('GET /api/version returns cached update metadata for the UI', async () => {
     const { baseUrl } = await startServerWithVersionInfo()
 

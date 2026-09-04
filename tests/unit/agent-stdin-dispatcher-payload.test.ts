@@ -7,8 +7,8 @@ import {
   buildWorkerDispatchPayload,
 } from '../../src/server/agent-stdin-dispatcher.js'
 import {
-  buildWorkerReminderTail,
-  ORCHESTRATOR_REMINDER_TAIL,
+  buildLocalizedWorkerReminderTail,
+  getOrchestratorReminderTail,
 } from '../../src/server/hive-team-guidance.js'
 
 const lineIndexOf = (payload: string, needle: string): number =>
@@ -38,9 +38,9 @@ describe('buildOrchestratorReportPayload', () => {
     expect(reminderIdx).toBeGreaterThan(artifactIdx)
   })
 
-  test('contains the full ORCHESTRATOR_REMINDER_TAIL block verbatim', () => {
+  test('contains the full localized orchestrator reminder block verbatim', () => {
     const payload = buildOrchestratorReportPayload('coder-1', 'done', [])
-    expect(payload).toContain(ORCHESTRATOR_REMINDER_TAIL)
+    expect(payload).toContain(getOrchestratorReminderTail('zh'))
   })
 
   test('ends with a trailing newline so xterm/bracketed-paste submits the message', () => {
@@ -53,7 +53,7 @@ describe('buildOrchestratorStatusPayload', () => {
   test('starts with the status header (distinct from the report header) and trails with the same reminder', () => {
     const payload = buildOrchestratorStatusPayload('coder-1', 'waiting on tests', [])
     expect(payload.split('\n')[0]).toBe('[Hive 系统消息：来自 @coder-1 的状态更新]')
-    expect(payload).toContain(ORCHESTRATOR_REMINDER_TAIL)
+    expect(payload).toContain(getOrchestratorReminderTail('zh'))
     // Reminder is at tail, not at head.
     const reminderIdx = lineIndexOf(payload, '<hive-system-reminder>')
     const bodyIdx = lineIndexOf(payload, 'waiting on tests')
@@ -73,11 +73,26 @@ describe('buildOrchestratorUserInputPayload', () => {
   test('preserves multi-line user input as-is before the reminder', () => {
     const payload = buildOrchestratorUserInputPayload('line one\nline two')
     expect(payload.startsWith('line one\nline two\n')).toBe(true)
-    expect(payload).toContain(ORCHESTRATOR_REMINDER_TAIL)
+    expect(payload).toContain(getOrchestratorReminderTail('zh'))
   })
 })
 
 describe('buildWorkerDispatchPayload', () => {
+  test('localizes the complete dispatch envelope and built-in role description to Spanish', () => {
+    const payload = buildWorkerDispatchPayload(
+      'Orchestrator',
+      '你是实现型 Coder，负责把明确任务落成最小正确代码改动。\n工作方式：\n- 先阅读相关文件和现有模式，再动手。\n- 优先小步修改，避免无关重构和范围扩张。\n- 改动后运行能覆盖风险的验证命令；不能验证时说明原因。\n交付说明要包含：改动文件、验证结果、剩余风险或阻塞。',
+      'disp-es',
+      'corrige el inicio de sesión',
+      'es'
+    )
+
+    expect(payload).toContain('[Mensaje del sistema Hive: tarea de @Orchestrator]')
+    expect(payload).toContain('Tu rol: Eres un programador.')
+    expect(payload).toContain('Debes cumplir:')
+    expect(payload).not.toMatch(/[\u3400-\u9fff]/u)
+  })
+
   test('keeps the existing dispatch header, role, obligation prose, and task body intact', () => {
     const payload = buildWorkerDispatchPayload(
       'orchestrator-1',
@@ -93,7 +108,7 @@ describe('buildWorkerDispatchPayload', () => {
 
   test('appends the worker reminder tail with the dispatch_id interpolated', () => {
     const payload = buildWorkerDispatchPayload('orchestrator-1', 'Coder', 'disp-77', 'task body')
-    expect(payload).toContain(buildWorkerReminderTail('disp-77'))
+    expect(payload).toContain(buildLocalizedWorkerReminderTail('disp-77', 'zh'))
     // No leaked placeholder.
     expect(payload).not.toContain('--dispatch <id>')
   })

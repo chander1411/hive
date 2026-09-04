@@ -84,6 +84,25 @@ const fallbackRoleDescriptions: Record<UiLanguage, Record<WorkerRole, string>> =
       'Report pass/fail/unverified separately, then suggest the next step.',
     ].join('\n'),
   },
+  es: {
+    coder: [
+      'Eres un programador. Convierte tareas bien definidas en el cambio de código correcto más pequeño.',
+      'Lee los archivos relevantes antes de editar, evita refactors ajenos y valida los riesgos.',
+      'Reporta archivos modificados, verificaciones, riesgos y bloqueos.',
+    ].join('\n'),
+    custom: [
+      'Eres un miembro personalizado del equipo.',
+      'Define tu objetivo, límites, forma de trabajo y criterio de finalización.',
+    ].join('\n'),
+    reviewer: [
+      'Eres un revisor. Busca errores reales, regresiones, casos límite y vacíos de pruebas.',
+      'Incluye severidad, archivo/línea, condición de reproducción y corrección mínima.',
+    ].join('\n'),
+    tester: [
+      'Eres un tester. Reproduce, prueba y entrega evidencia concreta.',
+      'Registra comandos, resultados, salida relevante y escenarios no cubiertos.',
+    ].join('\n'),
+  },
   zh: {
     coder: [
       '你是实现型 Coder，负责把明确任务落成最小正确代码改动。',
@@ -128,7 +147,7 @@ const getDefaultDescription = (
   language === 'zh'
     ? (roleTemplates.find((template) => template.roleType === role)?.description ??
       fallbackRoleDescriptions.zh[role])
-    : fallbackRoleDescriptions.en[role]
+    : fallbackRoleDescriptions[language][role]
 
 export const useWorkerComposer = ({
   createWorker,

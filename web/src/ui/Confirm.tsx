@@ -64,7 +64,7 @@ export const Confirm = ({
                 </Dialog.Title>
                 <Dialog.Description
                   data-testid="confirm-description"
-                  className="mt-1.5 text-sm text-sec"
+                  className="mt-1.5 whitespace-pre-line text-sm text-sec"
                 >
                   {description}
                 </Dialog.Description>

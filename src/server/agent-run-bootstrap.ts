@@ -9,7 +9,7 @@ import {
   buildAgentSessionBindingMarker,
 } from './agent-startup-instructions.js'
 import type { CommandPresetRecord } from './command-preset-store.js'
-import { withPresetResumeArgs } from './preset-launch-support.js'
+import { withoutSessionResumeArgs, withPresetResumeArgs } from './preset-launch-support.js'
 import {
   captureSessionIdForCapture,
   getSessionCaptureEnvironment,
@@ -69,12 +69,13 @@ export const buildAgentRunBootstrap = (
   config: AgentLaunchConfigInput,
   sessionStore: AgentSessionStorePort,
   getCommandPreset: (id: string) => CommandPresetRecord | undefined,
-  agent?: AgentSummary
+  agent?: AgentSummary,
+  freshStart = false
 ) => {
   const preset = resolveLaunchPreset(config, getCommandPreset)
   const discriminator = createSessionCaptureDiscriminator(workspace, agent)
   const startConfig = withPresetResumeArgs(
-    config,
+    freshStart ? withoutSessionResumeArgs(config) : config,
     preset,
     sessionStore.getLastSessionId(workspace.id, agentId),
     workspace.path,
@@ -112,11 +113,18 @@ export const startAgentRunCapture = ({
   workspace: WorkspaceSummary
 }) => {
   if (!sessionCaptureSnapshot || !startConfig.sessionIdCapture) return
+  const generation = sessionStore.getGeneration?.(workspace.id, agentId)
   void captureSessionIdForCapture(
     workspace.path,
     startConfig.sessionIdCapture,
     sessionCaptureSnapshot,
     (sessionId) => {
+      if (
+        generation !== undefined &&
+        sessionStore.getGeneration?.(workspace.id, agentId) !== generation
+      ) {
+        return
+      }
       sessionStore.setLastSessionId(workspace.id, agentId, sessionId)
     },
     SESSION_CAPTURE_TIMEOUT_MS

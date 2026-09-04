@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 
 import {
@@ -10,23 +10,58 @@ import {
 
 afterEach(() => {
   cleanup()
+  vi.restoreAllMocks()
 })
 
 const renderPane = (state: OrchestratorPaneState) => {
   const onStop = vi.fn()
   const onStart = vi.fn()
   const onRestart = vi.fn()
+  const onNewSession = vi.fn()
+  const onDeleteSession = vi.fn().mockResolvedValue(undefined)
+  const onSwitchSession = vi.fn()
   const onRemoveWorkspace = vi.fn()
   render(
     <OrchestratorPane
       state={state}
+      newSessionPending={false}
+      onDeleteSession={onDeleteSession}
+      onNewSession={onNewSession}
+      onSwitchSession={onSwitchSession}
+      sessionSwitchPending={false}
+      sessions={[
+        {
+          active: true,
+          createdAt: 1,
+          id: 'session-1',
+          name: 'Session 1',
+          updatedAt: 1,
+          workspaceId: 'workspace-1',
+        },
+        {
+          active: false,
+          createdAt: 2,
+          id: 'session-2',
+          name: 'Session 2',
+          updatedAt: 2,
+          workspaceId: 'workspace-1',
+        },
+      ]}
       onStop={onStop}
       onStart={onStart}
       onRestart={onRestart}
       onRemoveWorkspace={onRemoveWorkspace}
     />
   )
-  return { onRemoveWorkspace, onStop, onStart, onRestart }
+  return {
+    onDeleteSession,
+    onNewSession,
+    onRemoveWorkspace,
+    onStop,
+    onStart,
+    onRestart,
+    onSwitchSession,
+  }
 }
 
 describe('OrchestratorPane three-state UI', () => {
@@ -58,20 +93,31 @@ describe('OrchestratorPane three-state UI', () => {
     expect(onRestart).not.toHaveBeenCalled()
   })
 
-  test('running: PTY slot mounts; no overlay actions or empty bodies render', () => {
-    const { onStop, onStart, onRestart } = renderPane({ kind: 'running', runId: 'run-abc' })
+  test('running: PTY slot mounts and New Session requires confirmation', () => {
+    const { onNewSession, onStop, onStart, onRestart, onSwitchSession } = renderPane({
+      kind: 'running',
+      runId: 'run-abc',
+    })
 
     // PTY slot must use the run id so TerminalView can portal into it.
     const slot = document.getElementById('orch-pty-run-abc')
     expect(slot).not.toBeNull()
     expect(slot?.getAttribute('data-pty-slot')).toBe('orchestrator')
 
-    // Stop / Restart / status pill / overlay are all gone — actions surface
-    // through other channels (M6-B palette / WorkerModal). The pane is just
-    // a PTY in running state.
     expect(screen.queryByTestId('orchestrator-stop')).toBeNull()
     expect(screen.queryByTestId('orchestrator-restart')).toBeNull()
-    expect(screen.queryByTestId('orchestrator-running-actions')).toBeNull()
+    fireEvent.click(screen.getByTestId('orchestrator-session-manager'))
+    fireEvent.click(screen.getByText('Session 2'))
+    expect(onSwitchSession).toHaveBeenCalledWith('session-2')
+    fireEvent.click(screen.getByTestId('orchestrator-new-session'))
+    expect(screen.getByText('Start a new session?')).toBeInTheDocument()
+    expect(
+      screen.getByText(/The current AI conversation context will not be resumed/)
+    ).toHaveTextContent('The current AI conversation context will not be resumed.')
+    expect(onNewSession).not.toHaveBeenCalled()
+    fireEvent.change(screen.getByTestId('new-session-name'), { target: { value: 'Planning' } })
+    fireEvent.click(screen.getByTestId('new-session-submit'))
+    expect(onNewSession).toHaveBeenCalledWith('Planning')
     expect(screen.queryByTestId('orchestrator-starting-body')).toBeNull()
     expect(screen.queryByTestId('orchestrator-stopped-body')).toBeNull()
     expect(screen.queryByTestId('orchestrator-failed-body')).toBeNull()
@@ -104,5 +150,18 @@ describe('OrchestratorPane three-state UI', () => {
     expect(remove).toHaveTextContent('Remove workspace')
     fireEvent.click(remove)
     expect(onRemoveWorkspace).toHaveBeenCalledTimes(1)
+  })
+
+  test('session manager searches and deletes an inactive session', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    const { onDeleteSession } = renderPane({ kind: 'running', runId: 'run-abc' })
+
+    fireEvent.click(screen.getByTestId('orchestrator-session-manager'))
+    expect(screen.getByTestId('delete-session-session-1')).toBeDisabled()
+    fireEvent.change(screen.getByTestId('session-search'), { target: { value: 'Session 2' } })
+    expect(screen.queryByTestId('session-row-session-1')).toBeNull()
+    fireEvent.click(screen.getByTestId('delete-session-session-2'))
+
+    await waitFor(() => expect(onDeleteSession).toHaveBeenCalledWith('session-2'))
   })
 })

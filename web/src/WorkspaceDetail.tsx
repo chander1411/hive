@@ -221,6 +221,12 @@ export const WorkspaceDetail = ({
         >
           <OrchestratorPane
             state={orchestrator.state}
+            newSessionPending={orchestrator.newSessionPending}
+            onDeleteSession={orchestrator.deleteSession}
+            onNewSession={orchestrator.newSession}
+            onSwitchSession={orchestrator.switchSession}
+            sessionSwitchPending={orchestrator.sessionSwitchPending}
+            sessions={orchestrator.sessions}
             onStop={orchestrator.stop}
             onRemoveWorkspace={() => {
               void onDeleteWorkspace(workspace).catch((error: unknown) => {

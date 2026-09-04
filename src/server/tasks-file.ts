@@ -4,6 +4,7 @@ import { dirname, join } from 'node:path'
 import { buildProtocolDoc } from './hive-team-guidance.js'
 
 interface TasksFileService {
+  archiveAndResetTasks: (workspacePath: string) => { archivedPath: string | null; content: string }
   readTasks: (workspacePath: string) => string
   writeTasks: (workspacePath: string, content: string) => void
 }
@@ -13,6 +14,7 @@ export const TASKS_FILE_NAME = 'tasks.md'
 export const TASKS_RELATIVE_PATH = `${HIVE_DIR_NAME}/${TASKS_FILE_NAME}`
 export const PROTOCOL_FILE_NAME = 'PROTOCOL.md'
 export const PROTOCOL_RELATIVE_PATH = `${HIVE_DIR_NAME}/${PROTOCOL_FILE_NAME}`
+export const TASKS_HISTORY_DIR_NAME = 'history'
 
 export const getTasksFilePath = (workspacePath: string) =>
   join(workspacePath, HIVE_DIR_NAME, TASKS_FILE_NAME)
@@ -55,8 +57,25 @@ export const ensureProtocolFile = (workspacePath: string) => {
   return desired
 }
 
-export const createTasksFileService = (): TasksFileService => {
+const getTasksArchivePath = (workspacePath: string, timestamp: Date) => {
+  const filename = `tasks-${timestamp.toISOString().replaceAll(':', '-').replaceAll('.', '-')}.md`
+  return join(workspacePath, HIVE_DIR_NAME, TASKS_HISTORY_DIR_NAME, filename)
+}
+
+export const createTasksFileService = ({ now = () => new Date() } = {}): TasksFileService => {
   return {
+    archiveAndResetTasks(workspacePath) {
+      const content = ensureTasksFile(workspacePath)
+      let archivedPath: string | null = null
+      if (content.trim()) {
+        archivedPath = getTasksArchivePath(workspacePath, now())
+        mkdirSync(dirname(archivedPath), { recursive: true })
+        writeFileSync(archivedPath, content, { encoding: 'utf8', flag: 'wx' })
+      }
+      this.writeTasks(workspacePath, '')
+      return { archivedPath, content: '' }
+    },
+
     readTasks(workspacePath) {
       return ensureTasksFile(workspacePath)
     },

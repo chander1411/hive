@@ -4,6 +4,7 @@ import type { AgentLaunchConfigInput, PersistedAgentRun } from './agent-run-stor
 import type { LiveAgentRun } from './agent-runtime-types.js'
 import type { DispatchRecord, ListDispatchesOptions } from './dispatch-ledger-store.js'
 import type { RecoveryMessage } from './message-log-store.js'
+import { createWorkspaceSessionOperations, type SessionActivationResult } from './new-session.js'
 import type { PtyOutputBus } from './pty-output-bus.js'
 import { createRuntimeStoreLifecycle, createRuntimeStoreServices } from './runtime-store-helpers.js'
 import type { SettingsStore } from './settings-store.js'
@@ -15,6 +16,7 @@ import type {
   StatusTaskInput,
 } from './team-operations.js'
 import type { TerminalRunSummary } from './terminal-input-profile.js'
+import type { WorkspaceSessionSummary } from './workspace-session-store.js'
 import type { WorkerInput, WorkspaceRecord } from './workspace-store.js'
 
 interface RuntimeStore {
@@ -22,6 +24,17 @@ interface RuntimeStore {
   createWorkspace: (path: string, name: string) => WorkspaceSummary
   deleteWorkspace: (workspaceId: string) => Promise<void>
   listWorkspaces: () => WorkspaceSummary[]
+  listWorkspaceSessions: (workspaceId: string) => WorkspaceSessionSummary[]
+  deleteWorkspaceSession: (workspaceId: string, sessionId: string) => void
+  startNewSession: (
+    workspaceId: string,
+    input: StartAgentOptions & { name?: string }
+  ) => Promise<SessionActivationResult>
+  switchWorkspaceSession: (
+    workspaceId: string,
+    sessionId: string,
+    input: StartAgentOptions
+  ) => Promise<SessionActivationResult>
   addWorker: (workspaceId: string, input: WorkerInput) => AgentSummary
   deleteWorker: (workspaceId: string, workerId: string) => void
   renameWorker: (workspaceId: string, workerId: string, name: string) => AgentSummary
@@ -108,6 +121,7 @@ export const createRuntimeStore = (options: RuntimeStoreOptions = {}): RuntimeSt
   const lifecycle = createRuntimeStoreLifecycle(
     options.agentManager ? { agentManager: options.agentManager, services } : { services }
   )
+  const sessionOperations = createWorkspaceSessionOperations(services, lifecycle.startAgent)
   const runDataMutation = (mutation: () => void) => {
     if (!services.db) {
       mutation()
@@ -123,6 +137,12 @@ export const createRuntimeStore = (options: RuntimeStoreOptions = {}): RuntimeSt
       return workspace
     },
     listWorkspaces: () => services.workspaceStore.listWorkspaces(),
+    listWorkspaceSessions: sessionOperations.listSessions,
+    deleteWorkspaceSession: sessionOperations.deleteSession,
+    startNewSession: (workspaceId, input) =>
+      sessionOperations.startNewSession(workspaceId, input.hivePort, input.name),
+    switchWorkspaceSession: (workspaceId, sessionId, input) =>
+      sessionOperations.switchSession(workspaceId, sessionId, input.hivePort),
     deleteWorkspace: async (workspaceId) => {
       const workspace = services.workspaceStore.getWorkspaceSnapshot(workspaceId)
       lifecycle.deleteWorkspaceShell(workspaceId)
@@ -134,6 +154,7 @@ export const createRuntimeStore = (options: RuntimeStoreOptions = {}): RuntimeSt
       await services.tasksFileWatcher.stop(workspaceId)
       runDataMutation(() => {
         services.dispatchLedgerStore.deleteWorkspaceDispatches(workspaceId)
+        services.workspaceSessionStore.deleteWorkspaceSessions(workspaceId)
         services.workspaceStore.deleteWorkspace(workspaceId)
       })
       if (services.settings.getAppState('active_workspace_id')?.value === workspaceId) {

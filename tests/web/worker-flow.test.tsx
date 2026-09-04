@@ -282,7 +282,8 @@ describe('worker flow with real server', () => {
     render(<App />)
 
     await screen.findByTestId('add-worker-trigger', {}, { timeout: WORKER_FLOW_TIMEOUT_MS })
-    fireEvent.click(screen.getByRole('button', { name: 'Switch language to 中文' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Switch language to Español' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Cambiar idioma a 中文' }))
     await waitFor(() => {
       expect(screen.getByTestId('add-worker-trigger')).toHaveTextContent('添加成员')
     })

@@ -6,6 +6,7 @@ import type {
   WorkerRole,
   WorkspaceSummary,
 } from '../../src/shared/types.js'
+import { readUiLanguage } from './uiLanguage.js'
 
 export type { OpenTargetId, OpenWorkspaceErrorCode }
 
@@ -40,7 +41,11 @@ const isStaleUiSession = async (response: Response): Promise<boolean> => {
 }
 
 export const initializeUiSession = async (): Promise<void> => {
-  const response = await fetch('/api/ui/session', { mode: 'same-origin' })
+  const language = readUiLanguage()
+  const response = await fetch('/api/ui/session', {
+    headers: language ? { 'x-hive-language': language } : undefined,
+    mode: 'same-origin',
+  })
   if (!response.ok) {
     throw new Error('Failed to initialize UI session')
   }
@@ -57,11 +62,15 @@ const refreshUiSession = (): Promise<void> => {
 }
 
 const apiFetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
-  const response = await fetch(input, init)
+  const headers = new Headers(init?.headers)
+  const language = readUiLanguage()
+  if (language) headers.set('x-hive-language', language)
+  const nextInit = { ...init, headers }
+  const response = await fetch(input, nextInit)
   if (!(await isStaleUiSession(response))) return response
 
   await refreshUiSession()
-  return fetch(input, init)
+  return fetch(input, nextInit)
 }
 
 export const listWorkspaces = async (): Promise<WorkspaceSummary[]> => {
@@ -243,6 +252,101 @@ export const stopAgentRun = async (runId: string): Promise<void> => {
   if (!response.ok) {
     throw new Error('Failed to stop agent run')
   }
+}
+
+export interface WorkspaceSessionSummary {
+  active: boolean
+  createdAt: number
+  id: string
+  name: string
+  updatedAt: number
+  workspaceId: string
+}
+
+interface WorkspaceSessionPayload {
+  active: boolean
+  created_at: number
+  id: string
+  name: string
+  updated_at: number
+  workspace_id: string
+}
+
+const parseWorkspaceSession = (session: WorkspaceSessionPayload): WorkspaceSessionSummary => ({
+  active: session.active,
+  createdAt: session.created_at,
+  id: session.id,
+  name: session.name,
+  updatedAt: session.updated_at,
+  workspaceId: session.workspace_id,
+})
+
+export const listWorkspaceSessions = async (
+  workspaceId: string
+): Promise<WorkspaceSessionSummary[]> => {
+  const response = await apiFetch(`/api/workspaces/${workspaceId}/sessions`)
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response, 'Failed to load workspace sessions'))
+  }
+  const body = (await response.json()) as WorkspaceSessionPayload[]
+  return body.map(parseWorkspaceSession)
+}
+
+export const startNewSession = async (
+  workspaceId: string,
+  name?: string
+): Promise<{
+  archivedTasksPath: string | null
+  runId: string
+  session: WorkspaceSessionSummary
+}> => {
+  const response = await apiFetch(`/api/workspaces/${workspaceId}/new-session`, {
+    body: JSON.stringify({ name: name?.trim() || undefined }),
+    headers: { 'content-type': 'application/json' },
+    method: 'POST',
+  })
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response, 'Failed to start a new session'))
+  }
+  const body = (await response.json()) as {
+    archived_tasks_path: string | null
+    run_id: string
+    session: WorkspaceSessionPayload
+  }
+  return {
+    archivedTasksPath: body.archived_tasks_path,
+    runId: body.run_id,
+    session: parseWorkspaceSession(body.session),
+  }
+}
+
+export const deleteWorkspaceSession = async (
+  workspaceId: string,
+  sessionId: string
+): Promise<void> => {
+  const response = await apiFetch(`/api/workspaces/${workspaceId}/sessions/${sessionId}`, {
+    method: 'DELETE',
+  })
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response, 'Failed to delete workspace session'))
+  }
+}
+
+export const switchWorkspaceSession = async (
+  workspaceId: string,
+  sessionId: string
+): Promise<{ runId: string; session: WorkspaceSessionSummary }> => {
+  const response = await apiFetch(`/api/workspaces/${workspaceId}/sessions/${sessionId}/activate`, {
+    method: 'POST',
+  })
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response, 'Failed to switch workspace session'))
+  }
+  const body = (await response.json()) as {
+    run_id: string
+    session: WorkspaceSessionPayload
+  }
+  return { runId: body.run_id, session: parseWorkspaceSession(body.session) }
 }
 
 export const restartAgentRun = async (

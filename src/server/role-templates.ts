@@ -1,5 +1,6 @@
 import type { WorkerRole } from '../shared/types.js'
 
+import type { PromptLanguage } from './prompt-language.js'
 import { TASKS_RELATIVE_PATH } from './tasks-file.js'
 
 export const ORCHESTRATOR_ROLE_DESCRIPTION = [
@@ -45,6 +46,88 @@ export const CUSTOM_ROLE_DESCRIPTION = [
   '- 工作方式：如何调查、修改、验证或审查。',
   '- 完成标准：交付时需要说明哪些结果、风险和阻塞。',
 ].join('\n')
+
+const LOCALIZED_WORKER_DESCRIPTIONS: Record<PromptLanguage, Record<WorkerRole, string>> = {
+  en: {
+    coder: [
+      'You are a Coder. Turn clearly scoped tasks into the smallest correct code change.',
+      'Working style:',
+      '- Read the relevant files and local patterns before editing.',
+      '- Prefer small changes; avoid unrelated refactors and scope creep.',
+      '- Run validation that covers the risk. If you cannot validate, explain why.',
+      'Report changed files, verification, remaining risk, and blockers.',
+    ].join('\n'),
+    custom: [
+      "You are a custom team member. Rewrite this into the member's operating contract.",
+      'Recommended shape:',
+      '- Goal: what this member owns.',
+      '- Boundaries: what to do and what to avoid.',
+      '- Working style: how to inspect, edit, verify, or review.',
+      '- Done means: what results, risks, and blockers to report.',
+    ].join('\n'),
+    reviewer: [
+      'You are a Reviewer. Focus on quality review; do not replace the Orchestrator or edit by default.',
+      'Working style:',
+      '- Prioritize real bugs, regressions, edge cases, and test gaps.',
+      '- For each issue, include severity, file/line, trigger condition, and minimal fix.',
+      '- If no high-risk issue exists, state residual risk and unverified scope.',
+      'Report blocking issues first, ordered by severity.',
+    ].join('\n'),
+    tester: [
+      'You are a Tester. Reproduce, test, and produce concrete verification evidence.',
+      'Working style:',
+      '- Clarify the behavior, entry point, and failure condition under test.',
+      '- Prefer real commands or real paths. Add a minimal test when useful.',
+      '- Record commands, results, key output, and uncovered scenarios.',
+      'Report pass/fail/unverified separately, then suggest the next step.',
+    ].join('\n'),
+  },
+  es: {
+    coder: [
+      'Eres un programador. Convierte tareas bien definidas en el cambio de código correcto más pequeño.',
+      'Lee los archivos relevantes antes de editar, evita refactors ajenos y valida los riesgos.',
+      'Reporta archivos modificados, verificaciones, riesgos y bloqueos.',
+    ].join('\n'),
+    custom: [
+      'Eres un miembro personalizado del equipo.',
+      'Define tu objetivo, límites, forma de trabajo y criterio de finalización.',
+    ].join('\n'),
+    reviewer: [
+      'Eres un revisor. Busca errores reales, regresiones, casos límite y vacíos de pruebas.',
+      'Incluye severidad, archivo/línea, condición de reproducción y corrección mínima.',
+    ].join('\n'),
+    tester: [
+      'Eres un tester. Reproduce, prueba y entrega evidencia concreta.',
+      'Registra comandos, resultados, salida relevante y escenarios no cubiertos.',
+    ].join('\n'),
+  },
+  zh: {
+    coder: CODER_ROLE_DESCRIPTION,
+    custom: CUSTOM_ROLE_DESCRIPTION,
+    reviewer: REVIEWER_ROLE_DESCRIPTION,
+    tester: TESTER_ROLE_DESCRIPTION,
+  },
+}
+
+export const localizeKnownRoleDescription = (
+  description: string,
+  language: PromptLanguage,
+  expectedRole?: WorkerRole
+) => {
+  const roles: WorkerRole[] = expectedRole
+    ? [expectedRole]
+    : ['coder', 'reviewer', 'tester', 'custom']
+  for (const role of roles) {
+    if (
+      Object.values(LOCALIZED_WORKER_DESCRIPTIONS).some(
+        (descriptions) => descriptions[role] === description
+      )
+    ) {
+      return LOCALIZED_WORKER_DESCRIPTIONS[language][role]
+    }
+  }
+  return description
+}
 
 export const getDefaultRoleDescription = (role: WorkerRole | 'orchestrator') => {
   switch (role) {

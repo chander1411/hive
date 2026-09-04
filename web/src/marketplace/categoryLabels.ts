@@ -37,7 +37,7 @@ const prettifyRaw = (category: string) =>
 export const localizeMarketplaceCategory = (category: string, language: UiLanguage): string => {
   const entry = CATEGORY_LABELS[category]
   if (!entry) return prettifyRaw(category)
-  return entry[language]
+  return entry[language === 'zh' ? 'zh' : 'en']
 }
 
 // Upstream emits categories alphabetically by the EN kebab key, which renders

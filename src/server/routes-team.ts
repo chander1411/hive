@@ -1,10 +1,11 @@
-import { BadRequestError } from './http-errors.js'
+import { BadRequestError, ConflictError } from './http-errors.js'
 import { readJsonBody, route, sendJson } from './route-helpers.js'
 import type {
   CancelTaskBody,
   ReportTaskBody,
   RouteDefinition,
   SendTaskBody,
+  StartWorkerBody,
 } from './route-types.js'
 import { authenticateCliAgent, requireCommandForRole } from './team-authz.js'
 
@@ -19,6 +20,35 @@ const getArtifacts = (value: unknown) =>
   Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : []
 
 export const teamRoutes: RouteDefinition[] = [
+  route('POST', '/api/team/start', async ({ request, response, store }) => {
+    const body = await readJsonBody<StartWorkerBody>(request)
+    const projectId = requireNonEmptyString(body.project_id, 'project_id')
+    const fromAgentId = requireNonEmptyString(body.from_agent_id, 'from_agent_id')
+    const workerName = requireNonEmptyString(body.worker_name, 'worker_name')
+    const agent = authenticateCliAgent({
+      fromAgentId,
+      getAgent: store.getAgent,
+      token: body.token,
+      validateToken: store.validateAgentToken,
+      workspaceId: projectId,
+    })
+    requireCommandForRole(agent, 'start')
+    const worker = store.listWorkers(projectId).find((item) => item.name === workerName)
+    if (!worker) throw new BadRequestError(`Worker not found: ${workerName}`)
+    if (!store.peekAgentLaunchConfig(projectId, worker.id)) {
+      throw new ConflictError('No worker launch config available')
+    }
+    const existingRun = store.getActiveRunByAgentId(projectId, worker.id)
+    const run = await store.startAgent(projectId, worker.id, {
+      hivePort: String(request.socket.localPort ?? ''),
+    })
+    sendJson(response, 202, {
+      already_running: existingRun !== undefined,
+      ok: true,
+      run_id: run.runId,
+      worker_id: worker.id,
+    })
+  }),
   route('POST', '/api/team/send', async ({ request, response, store }) => {
     const body = await readJsonBody<SendTaskBody>(request)
     const projectId = requireNonEmptyString(body.project_id, 'project_id')

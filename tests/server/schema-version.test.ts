@@ -54,6 +54,38 @@ describe('schema version', () => {
     db.close()
   })
 
+  test('latest schema includes persistent workspace sessions', () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'hive-schema-sessions-'))
+    tempDirs.push(dataDir)
+
+    stores.push(createRuntimeStore({ dataDir }))
+
+    const db = new Database(join(dataDir, 'runtime.sqlite'), { readonly: true })
+    const columns = new Set(
+      (db.prepare('PRAGMA table_info(workspace_sessions)').all() as Array<{ name: string }>).map(
+        (column) => column.name
+      )
+    )
+    expect(columns).toEqual(
+      new Set([
+        'id',
+        'workspace_id',
+        'name',
+        'tasks_content',
+        'agent_session_ids_json',
+        'messages_json',
+        'dispatches_json',
+        'active',
+        'created_at',
+        'updated_at',
+      ])
+    )
+    expect(db.prepare('SELECT version FROM schema_version WHERE version = ?').get(19)).toEqual({
+      version: 19,
+    })
+    db.close()
+  })
+
   test('latest schema includes last_session_id, pid, ended_at and drops messages.kind', () => {
     const dataDir = mkdtempSync(join(tmpdir(), 'hive-schema-columns-'))
     tempDirs.push(dataDir)

@@ -1,6 +1,15 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { TerminalRunSummary } from '../api.js'
-import { type OrchestratorStartResult, startAgentRun, stopAgentRun } from '../api.js'
+import {
+  deleteWorkspaceSession,
+  listWorkspaceSessions,
+  type OrchestratorStartResult,
+  startAgentRun,
+  startNewSession,
+  stopAgentRun,
+  switchWorkspaceSession,
+  type WorkspaceSessionSummary,
+} from '../api.js'
 import { findOrchestratorRun, orchestratorAgentId } from '../terminal/useTerminalRuns.js'
 import type { OrchestratorPaneState } from './OrchestratorPane.js'
 
@@ -25,6 +34,12 @@ interface UseOrchestratorPaneStateOutput {
   start: () => void
   stop: () => void
   restart: () => void
+  deleteSession: (sessionId: string) => Promise<void>
+  newSession: (name?: string) => void
+  newSessionPending: boolean
+  sessions: WorkspaceSessionSummary[]
+  sessionSwitchPending: boolean
+  switchSession: (sessionId: string) => void
 }
 
 /**
@@ -48,12 +63,34 @@ export const useOrchestratorPaneState = ({
     runId: string
   } | null>(null)
   const [suppressedRunId, setSuppressedRunId] = useState<string | null>(null)
+  const [newSessionWorkspaceId, setNewSessionWorkspaceId] = useState<string | null>(null)
+  const [sessionSwitchWorkspaceId, setSessionSwitchWorkspaceId] = useState<string | null>(null)
+  const [deletingSessionId, setDeletingSessionId] = useState<string | null>(null)
+  const [sessions, setSessions] = useState<WorkspaceSessionSummary[]>([])
   const optimisticRunId = optimisticRun?.workspaceId === workspaceId ? optimisticRun.runId : null
   const suppressingAutostart = Boolean(suppressedRunId && !orchestratorRun && !optimisticRunId)
 
   useEffect(() => {
     setSuppressedRunId(suppressAutostartRunId ?? null)
   }, [suppressAutostartRunId])
+
+  useEffect(() => {
+    if (!workspaceId) {
+      setSessions([])
+      return
+    }
+    let cancelled = false
+    void listWorkspaceSessions(workspaceId)
+      .then((result) => {
+        if (!cancelled) setSessions(result)
+      })
+      .catch((error: unknown) => {
+        console.error('[hive] swallowed:workspaceSessions.list', error)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [workspaceId])
 
   useEffect(() => {
     if (orchestratorRun) {
@@ -76,10 +113,10 @@ export const useOrchestratorPaneState = ({
   }, [optimisticRunId, orchestratorRun])
 
   let state: OrchestratorPaneState
-  if (orchestratorRun) {
-    state = { kind: 'running', runId: orchestratorRun.run_id }
-  } else if (optimisticRunId) {
+  if (optimisticRunId && orchestratorRun?.run_id !== optimisticRunId) {
     state = { kind: 'running', runId: optimisticRunId }
+  } else if (orchestratorRun) {
+    state = { kind: 'running', runId: orchestratorRun.run_id }
   } else if (pendingStartWorkspaceId === workspaceId || suppressingAutostart) {
     state = { kind: 'starting' }
   } else if (autostartError) {
@@ -144,5 +181,87 @@ export const useOrchestratorPaneState = ({
     start()
   }, [agentId, onAfterStart, onClearAutostartError, orchestratorRun, start, workspaceId])
 
-  return { state, start, stop, restart }
+  const newSession = useCallback(
+    (name?: string) => {
+      if (!workspaceId || newSessionWorkspaceId === workspaceId) return
+      onClearAutostartError()
+      setNewSessionWorkspaceId(workspaceId)
+      void startNewSession(workspaceId, name)
+        .then((result) => {
+          setOptimisticRun({ workspaceId, runId: result.runId })
+          setSessions((current) => [
+            ...current
+              .filter((session) => session.id !== result.session.id)
+              .map((session) => ({ ...session, active: false })),
+            result.session,
+          ])
+          onAfterStart?.({ ok: true, error: null, run_id: result.runId })
+        })
+        .catch((error: unknown) => {
+          const message = error instanceof Error ? error.message : 'Failed to start a new session'
+          onAfterStart?.({ ok: false, error: message, run_id: null })
+        })
+        .finally(() =>
+          setNewSessionWorkspaceId((current) => (current === workspaceId ? null : current))
+        )
+    },
+    [newSessionWorkspaceId, onAfterStart, onClearAutostartError, workspaceId]
+  )
+
+  const deleteSession = useCallback(
+    async (sessionId: string) => {
+      if (!workspaceId || deletingSessionId) return
+      setDeletingSessionId(sessionId)
+      try {
+        await deleteWorkspaceSession(workspaceId, sessionId)
+        setSessions((current) => current.filter((session) => session.id !== sessionId))
+      } finally {
+        setDeletingSessionId(null)
+      }
+    },
+    [deletingSessionId, workspaceId]
+  )
+
+  const switchSession = useCallback(
+    (sessionId: string) => {
+      if (
+        !workspaceId ||
+        sessionSwitchWorkspaceId === workspaceId ||
+        sessions.some((session) => session.id === sessionId && session.active)
+      ) {
+        return
+      }
+      onClearAutostartError()
+      setSessionSwitchWorkspaceId(workspaceId)
+      void switchWorkspaceSession(workspaceId, sessionId)
+        .then((result) => {
+          setOptimisticRun({ workspaceId, runId: result.runId })
+          setSessions((current) =>
+            current.map((session) => ({ ...session, active: session.id === result.session.id }))
+          )
+          onAfterStart?.({ ok: true, error: null, run_id: result.runId })
+        })
+        .catch((error: unknown) => {
+          const message = error instanceof Error ? error.message : 'Failed to switch session'
+          onAfterStart?.({ ok: false, error: message, run_id: null })
+        })
+        .finally(() =>
+          setSessionSwitchWorkspaceId((current) => (current === workspaceId ? null : current))
+        )
+    },
+    [onAfterStart, onClearAutostartError, sessionSwitchWorkspaceId, sessions, workspaceId]
+  )
+
+  return {
+    state,
+    deleteSession,
+    start,
+    stop,
+    restart,
+    newSession,
+    newSessionPending: newSessionWorkspaceId === workspaceId,
+    sessions,
+    sessionSwitchPending: sessionSwitchWorkspaceId === workspaceId,
+    switchSession,
+  }
 }

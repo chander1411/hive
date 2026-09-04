@@ -43,6 +43,7 @@ export const resolveStartupCommandLaunchConfig = (
     commandPresetId: null,
     interactiveCommand: preset?.command ?? getStartupCommandExecutable(trimmedStartupCommand),
     presetAugmentationDisabled: true,
+    resumeArgsTemplate: preset?.resumeArgsTemplate ?? null,
     sessionIdCapture: preset?.sessionIdCapture ?? null,
   }
 }

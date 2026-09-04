@@ -1,6 +1,7 @@
 import type { AgentSummary, WorkspaceSummary } from '../shared/types.js'
 import type { PersistedAgentRun } from './agent-run-store.js'
 import type { MessageLogHandle, MessageLogRecord, RecoveryMessage } from './message-log-store.js'
+import type { PromptLanguage } from './prompt-language.js'
 
 export interface RestartPolicyInput {
   deleteMessage: (handle: MessageLogHandle) => void
@@ -12,6 +13,7 @@ export interface RestartPolicyInput {
   listAgentRuns: (agentId: string) => PersistedAgentRun[]
   listMessagesForRecovery: (workspaceId: string, sinceMs: number) => RecoveryMessage[]
   readTasks: (workspacePath: string) => string
+  getPromptLanguage?: () => PromptLanguage
 }
 
 export const findPreviousRun = (runs: PersistedAgentRun[], currentRunId: string) =>

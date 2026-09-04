@@ -112,6 +112,10 @@ export const createMessageLogStore = (db: Database) => {
     db.prepare('DELETE FROM messages WHERE sequence = ?').run(handle.sequence)
   }
 
+  const deleteWorkspaceMessages = (workspaceId: string) => {
+    db.prepare('DELETE FROM messages WHERE workspace_id = ?').run(workspaceId)
+  }
+
   const parseArtifacts = (value: string | null) => {
     if (!value) {
       return []
@@ -179,6 +183,7 @@ export const createMessageLogStore = (db: Database) => {
 
   return {
     deleteMessage,
+    deleteWorkspaceMessages,
     insertMessage,
     listMessageKinds,
     listMessagesForRecovery,

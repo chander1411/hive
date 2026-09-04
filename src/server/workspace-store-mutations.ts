@@ -86,3 +86,10 @@ export const markTaskReported = (
 }
 
 export const markTaskCancelled = markTaskReported
+
+export const resetAgentsForNewSession = (workspaces: WorkspaceMap, workspaceId: string) => {
+  for (const agent of getWorkspaceRecord(workspaces, workspaceId).agents) {
+    agent.status = 'stopped'
+    agent.pendingTaskCount = 0
+  }
+}
