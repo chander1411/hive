@@ -262,6 +262,18 @@ describe('TerminalView', () => {
     expect(terminalLoadEvents.indexOf('webgl')).toBeGreaterThan(openIndex)
   })
 
+  test('keeps OpenCode on the stable default renderer', async () => {
+    vi.stubGlobal('WebSocket', MockWebSocket as never)
+    addPortalSlot('run-opencode-renderer')
+
+    render(<TerminalView inputProfile="opencode" runId="run-opencode-renderer" title="OpenCode" />)
+
+    await waitFor(() => {
+      expect(terminalLoadEvents).toContain('webLinks')
+    })
+    expect(terminalLoadEvents).not.toContain('webgl')
+  })
+
   test('resizes again when the terminal container changes size', async () => {
     vi.stubGlobal('WebSocket', MockWebSocket as never)
     vi.stubGlobal('ResizeObserver', MockResizeObserver as never)

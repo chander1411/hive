@@ -121,20 +121,25 @@ export const useTerminalRun = (
           // Keep the core terminal usable when optional addons fail to load.
         })
 
-      void import('@xterm/addon-webgl')
-        .then((webglModule) => {
-          if (disposed || terminal !== nextTerminal) return
-          try {
-            const webglAddon = new webglModule.WebglAddon()
-            webglAddon.onContextLoss(() => webglAddon.dispose())
-            nextTerminal.loadAddon(webglAddon)
-          } catch {
-            // Fall back to the default renderer when WebGL is unavailable.
-          }
-        })
-        .catch(() => {
-          // Fall back to the default renderer when the WebGL chunk is unavailable.
-        })
+      // OpenCode redraws large full-screen regions and can trigger stale glyph
+      // atlas corruption in xterm 6's WebGL renderer when several terminals
+      // share the same atlas. Keep it on xterm's stable default renderer.
+      if (inputProfile !== 'opencode') {
+        void import('@xterm/addon-webgl')
+          .then((webglModule) => {
+            if (disposed || terminal !== nextTerminal) return
+            try {
+              const webglAddon = new webglModule.WebglAddon()
+              webglAddon.onContextLoss(() => webglAddon.dispose())
+              nextTerminal.loadAddon(webglAddon)
+            } catch {
+              // Fall back to the default renderer when WebGL is unavailable.
+            }
+          })
+          .catch(() => {
+            // Fall back to the default renderer when the WebGL chunk is unavailable.
+          })
+      }
 
       // Take over IME composition so xterm's built-in CompositionHelper does
       // not emit spurious DEL (0x7f) bytes after each commit. Without this,
