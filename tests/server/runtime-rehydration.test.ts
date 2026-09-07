@@ -154,7 +154,8 @@ describe('runtime rehydration', () => {
       '-tmp-hive-alpha',
       '11111111-1111-4111-8111-111111111111.jsonl'
     )
-    const workerPromptMarker = `Hive session binding: workspace_id=${workspace.id}; agent_id=${worker.id}`
+    const hiveSessionId = firstStore.getActiveWorkspaceSessionId(workspace.id)
+    const workerPromptMarker = `Hive session binding: workspace_id=${workspace.id}; agent_id=${worker.id}; session_id=${hiveSessionId}`
     const manager = createAgentManager()
     const startSpy = vi.spyOn(manager, 'startAgent')
 

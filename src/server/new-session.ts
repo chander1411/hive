@@ -2,6 +2,7 @@ import { relative } from 'node:path'
 import type { LiveAgentRun } from './agent-runtime-types.js'
 import { ConflictError } from './http-errors.js'
 import type { RuntimeStoreServices } from './runtime-store-helpers.js'
+import { toSessionScopeId } from './session-scope.js'
 import type { WorkspaceSessionSummary } from './workspace-session-store.js'
 import { getOrchestratorId } from './workspace-store-support.js'
 
@@ -16,47 +17,54 @@ export const createWorkspaceSessionOperations = (
   startAgent: (
     workspaceId: string,
     agentId: string,
-    input: { hivePort: string }
+    input: { hivePort: string; sessionId?: string }
   ) => Promise<LiveAgentRun>
 ) => {
   const operations = new Map<string, Promise<SessionActivationResult>>()
 
   const getCurrentState = (workspaceId: string) => {
     const workspace = services.workspaceStore.getWorkspaceSnapshot(workspaceId)
+    const activeSessionId = services.workspaceSessionStore
+      .listSessions(workspaceId)
+      .find((session) => session.active)?.id
+    const sessionScopeId = toSessionScopeId(workspaceId, activeSessionId)
     return {
       agentSessionIds: Object.fromEntries(
         workspace.agents.flatMap((agent) => {
-          const sessionId = services.agentRuntime.getLastSessionId(workspaceId, agent.id)
+          const sessionId = services.agentRuntime.getLastSessionId(sessionScopeId, agent.id)
           return sessionId ? [[agent.id, sessionId]] : []
         })
       ),
-      tasksContent: services.tasksFileService.readTasks(workspace.summary.path),
+      tasksContent: activeSessionId
+        ? services.tasksFileService.readSessionTasks(
+            workspace.summary.path,
+            activeSessionId,
+            services.tasksFileService.readTasks(workspace.summary.path)
+          )
+        : services.tasksFileService.readTasks(workspace.summary.path),
     }
-  }
-
-  const stopWorkspaceAgents = async (workspaceId: string) => {
-    const agents = [...services.workspaceStore.getWorkspaceSnapshot(workspaceId).agents]
-    await Promise.all(
-      agents.map((agent) => services.agentRuntime.stopAgentAndWait(workspaceId, agent.id))
-    )
-    return agents
   }
 
   const restoreAgentState = (
     workspaceId: string,
+    sessionId: string,
     agents: Array<{ id: string }>,
     agentSessionIds: Record<string, string>
   ) => {
+    const scopeId = toSessionScopeId(workspaceId, sessionId)
     for (const agent of agents) {
-      services.agentRuntime.clearAgentFreshStart(workspaceId, agent.id)
-      services.agentRuntime.clearLastSessionId(workspaceId, agent.id)
-      const sessionId = agentSessionIds[agent.id]
-      if (sessionId) services.agentRuntime.setLastSessionId(workspaceId, agent.id, sessionId)
+      services.agentRuntime.clearAgentFreshStart(workspaceId, `${sessionId}:${agent.id}`)
+      services.agentRuntime.clearLastSessionId(scopeId, agent.id)
+      const nativeSessionId = agentSessionIds[agent.id]
+      if (nativeSessionId) {
+        services.agentRuntime.setLastSessionId(scopeId, agent.id, nativeSessionId)
+      }
     }
     services.workspaceStore.resetAgentsForNewSession(workspaceId)
+    const sessionScopeId = toSessionScopeId(workspaceId, sessionId)
     for (const dispatch of services.dispatchLedgerStore.listOpenDispatchKinds()) {
       if (
-        dispatch.workspace_id === workspaceId &&
+        dispatch.workspace_id === sessionScopeId &&
         services.workspaceStore.hasAgent(workspaceId, dispatch.worker_id)
       ) {
         services.workspaceStore.markTaskDispatched(workspaceId, dispatch.worker_id)
@@ -71,27 +79,27 @@ export const createWorkspaceSessionOperations = (
   ): Promise<SessionActivationResult> => {
     const workspace = services.workspaceStore.getWorkspaceSnapshot(workspaceId)
     const orchestratorId = getOrchestratorId(workspaceId)
-    const agents = await stopWorkspaceAgents(workspaceId)
+    const agents = [...workspace.agents]
     const currentState = getCurrentState(workspaceId)
     const session = services.workspaceSessionStore.createSession(workspaceId, currentState, name)
 
     for (const agent of agents) {
-      services.agentRuntime.clearLastSessionId(workspaceId, agent.id)
-      services.agentRuntime.markAgentForFreshStart(workspaceId, agent.id)
+      services.agentRuntime.clearLastSessionId(toSessionScopeId(workspaceId, session.id), agent.id)
+      services.agentRuntime.markAgentForFreshStart(workspaceId, `${session.id}:${agent.id}`)
     }
 
     const { archivedPath } = services.tasksFileService.archiveAndResetTasks(workspace.summary.path)
-    services.dispatchLedgerStore.deleteWorkspaceDispatches(workspaceId)
-    services.messageLogStore.deleteWorkspaceMessages(workspaceId)
+    services.tasksFileService.writeSessionTasks(workspace.summary.path, session.id, '')
+    await services.tasksFileWatcher.start(workspaceId, workspace.summary.path, session.id)
     services.workspaceStore.resetAgentsForNewSession(workspaceId)
 
-    const run = await startAgent(workspaceId, orchestratorId, { hivePort })
+    const run = await startAgent(workspaceId, orchestratorId, { hivePort, sessionId: session.id })
     return {
       archivedTasksPath: archivedPath
         ? relative(workspace.summary.path, archivedPath).replaceAll('\\', '/')
         : null,
       run,
-      session,
+      session: { ...session, running: true },
     }
   }
 
@@ -101,17 +109,30 @@ export const createWorkspaceSessionOperations = (
     hivePort: string
   ): Promise<SessionActivationResult> => {
     const workspace = services.workspaceStore.getWorkspaceSnapshot(workspaceId)
-    const agents = await stopWorkspaceAgents(workspaceId)
+    const agents = [...workspace.agents]
     const target = services.workspaceSessionStore.activateSession(
       workspaceId,
       sessionId,
       getCurrentState(workspaceId)
     )
     const state = services.workspaceSessionStore.getState(workspaceId, target.id)
-    restoreAgentState(workspaceId, agents, state.agentSessionIds)
-    services.tasksFileService.writeTasks(workspace.summary.path, state.tasksContent)
-    const run = await startAgent(workspaceId, getOrchestratorId(workspaceId), { hivePort })
-    return { archivedTasksPath: null, run, session: { ...target, active: true } }
+    restoreAgentState(workspaceId, target.id, agents, state.agentSessionIds)
+    const tasksContent = services.tasksFileService.readSessionTasks(
+      workspace.summary.path,
+      target.id,
+      state.tasksContent
+    )
+    services.tasksFileService.writeTasks(workspace.summary.path, tasksContent)
+    await services.tasksFileWatcher.start(workspaceId, workspace.summary.path, target.id)
+    const run = await startAgent(workspaceId, getOrchestratorId(workspaceId), {
+      hivePort,
+      sessionId: target.id,
+    })
+    return {
+      archivedTasksPath: null,
+      run,
+      session: { ...target, active: true, running: true },
+    }
   }
 
   const runExclusive = (workspaceId: string, operation: () => Promise<SessionActivationResult>) => {
@@ -127,10 +148,15 @@ export const createWorkspaceSessionOperations = (
 
   return {
     ensureActiveSession(workspaceId: string) {
-      return services.workspaceSessionStore.ensureActiveSession(
-        workspaceId,
-        getCurrentState(workspaceId)
+      const workspace = services.workspaceStore.getWorkspaceSnapshot(workspaceId)
+      const state = getCurrentState(workspaceId)
+      const session = services.workspaceSessionStore.ensureActiveSession(workspaceId, state)
+      services.tasksFileService.readSessionTasks(
+        workspace.summary.path,
+        session.id,
+        state.tasksContent
       )
+      return session
     },
     listSessions(workspaceId: string) {
       services.workspaceSessionStore.ensureActiveSession(workspaceId, getCurrentState(workspaceId))
@@ -140,11 +166,14 @@ export const createWorkspaceSessionOperations = (
       runExclusive(workspaceId, () => executeNew(workspaceId, hivePort, name)),
     switchSession: (workspaceId: string, sessionId: string, hivePort: string) =>
       runExclusive(workspaceId, () => executeSwitch(workspaceId, sessionId, hivePort)),
-    deleteSession(workspaceId: string, sessionId: string) {
+    async deleteSession(workspaceId: string, sessionId: string) {
       if (operations.has(workspaceId)) {
         throw new ConflictError('A session operation is already running for this workspace')
       }
+      const workspace = services.workspaceStore.getWorkspaceSnapshot(workspaceId)
+      await services.agentRuntime.stopSessionAndWait(workspaceId, sessionId)
       services.workspaceSessionStore.deleteSession(workspaceId, sessionId)
+      services.tasksFileService.deleteSessionTasks(workspace.summary.path, sessionId)
     },
   }
 }

@@ -7,6 +7,7 @@ import {
   writeSystemMessage,
 } from './restart-policy-support.js'
 import { createSystemRecoverySummaryMessage } from './runtime-message-builders.js'
+import { toSessionScopeId } from './session-scope.js'
 
 const RECOVERY_WINDOW_MS = 60 * 60 * 1000
 
@@ -15,6 +16,7 @@ export interface RestartPolicy {
     agentId: string
     runId: string
     startConfig: AgentLaunchConfigInput
+    sessionId?: string | undefined
     workspace: WorkspaceSummary
     writeToRun: (runId: string, text: string) => void
   }) => boolean
@@ -35,7 +37,7 @@ export const createRestartPolicy = ({
   readTasks,
   getPromptLanguage = () => 'zh',
 }: RestartPolicyInput): RestartPolicy => ({
-  injectPostStartMessage({ agentId, runId, startConfig, workspace, writeToRun }) {
+  injectPostStartMessage({ agentId, runId, sessionId, startConfig, workspace, writeToRun }) {
     const previousRun = findPreviousRun(listAgentRuns(agentId), runId)
     if (!previousRun) return false
 
@@ -45,14 +47,15 @@ export const createRestartPolicy = ({
     const workers = snapshot.agents.filter(
       (item) => item.role !== 'orchestrator' && item.id !== agentId
     )
-    const tasksContent = readTasks(snapshot.summary.path)
+    const tasksContent = readTasks(snapshot.summary.path, sessionId)
+    const scopeId = toSessionScopeId(workspace.id, sessionId)
 
     if (startConfig.resumedSessionId) return true
 
     const text = buildRecoverySummary({
       agent,
-      allTaskMessages: listMessagesForRecovery(workspace.id, 0),
-      messages: listMessagesForRecovery(workspace.id, Date.now() - RECOVERY_WINDOW_MS),
+      allTaskMessages: listMessagesForRecovery(scopeId, 0),
+      messages: listMessagesForRecovery(scopeId, Date.now() - RECOVERY_WINDOW_MS),
       tasksContent,
       workers,
       workspace,
@@ -61,7 +64,10 @@ export const createRestartPolicy = ({
     writeSystemMessage({
       deleteMessage,
       insertMessage,
-      record: createSystemRecoverySummaryMessage(workspace.id, agentId, text),
+      record: {
+        ...createSystemRecoverySummaryMessage(workspace.id, agentId, text),
+        workspaceId: scopeId,
+      },
       runId,
       text,
       writeToRun,

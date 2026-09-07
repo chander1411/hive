@@ -40,6 +40,7 @@ const serializeWorkspaceSession = (
   created_at: session.createdAt,
   id: session.id,
   name: session.name,
+  running: session.running,
   updated_at: session.updatedAt,
   workspace_id: session.workspaceId,
 })
@@ -139,7 +140,7 @@ export const workspaceRoutes: RouteDefinition[] = [
   route(
     'DELETE',
     '/api/workspaces/:workspaceId/sessions/:sessionId',
-    ({ params, request, response, store }) => {
+    async ({ params, request, response, store }) => {
       const workspaceId = getRequiredParam(
         response,
         params,
@@ -150,7 +151,7 @@ export const workspaceRoutes: RouteDefinition[] = [
       if (!workspaceId || !sessionId) return
 
       requireUiTokenFromRequest(request, store.validateUiToken)
-      store.deleteWorkspaceSession(workspaceId, sessionId)
+      await store.deleteWorkspaceSession(workspaceId, sessionId)
       response.statusCode = 204
       response.end()
     }
@@ -226,19 +227,26 @@ export const workspaceRoutes: RouteDefinition[] = [
 
     const agentId = request.headers['x-hive-agent-id']
     const token = request.headers['x-hive-agent-token']
+    const sessionId = request.headers['x-hive-session-id']
     const agent = authenticateCliAgent({
       fromAgentId: typeof agentId === 'string' ? agentId : undefined,
       getAgent: store.getAgent,
       token: typeof token === 'string' ? token : undefined,
       validateToken: store.validateAgentToken,
       workspaceId,
+      sessionId: typeof sessionId === 'string' ? sessionId : undefined,
     })
     requireCommandForRole(agent, 'list')
 
     sendJson(
       response,
       200,
-      enrichTeamList(workspaceId, store, store.listWorkers(workspaceId)).map(serializeTeamListItem)
+      enrichTeamList(
+        workspaceId,
+        store,
+        store.listWorkers(workspaceId, typeof sessionId === 'string' ? sessionId : undefined),
+        typeof sessionId === 'string' ? sessionId : undefined
+      ).map(serializeTeamListItem)
     )
   }),
   route(

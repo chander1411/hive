@@ -3,15 +3,20 @@ import type { AgentSummary, WorkspaceSummary } from '../shared/types.js'
 import { getHiveTeamRules } from './hive-team-guidance.js'
 import type { PromptLanguage } from './prompt-language.js'
 import { localizeKnownRoleDescription } from './role-templates.js'
-import { TASKS_RELATIVE_PATH } from './tasks-file.js'
+import { getSessionTasksRelativePath, TASKS_RELATIVE_PATH } from './tasks-file.js'
 
 export const buildAgentSessionBindingMarker = ({
   agent,
+  sessionId,
   workspace,
 }: {
   agent: AgentSummary
+  sessionId?: string | undefined
   workspace: WorkspaceSummary
-}) => `Hive session binding: workspace_id=${workspace.id}; agent_id=${agent.id}`
+}) =>
+  `Hive session binding: workspace_id=${workspace.id}; agent_id=${agent.id}${
+    sessionId ? `; session_id=${sessionId}` : ''
+  }`
 
 export const buildAgentLegacyIdentityMarker = ({
   agent,
@@ -41,11 +46,16 @@ export const buildAgentStartupInstructions = ({
   agent,
   workspace,
   language = 'zh',
+  newSession = false,
+  sessionId,
 }: {
   agent: AgentSummary
   workspace: WorkspaceSummary
   language?: PromptLanguage
+  newSession?: boolean
+  sessionId?: string | undefined
 }) => {
+  const tasksPath = sessionId ? getSessionTasksRelativePath(sessionId) : TASKS_RELATIVE_PATH
   if (language !== 'zh') {
     const es = language === 'es'
     const lines = [
@@ -56,7 +66,7 @@ export const buildAgentStartupInstructions = ({
       buildAgentLegacyIdentityMarker({ agent, workspace, language }),
       `${es ? 'Workspace actual' : 'Current workspace'}: ${workspace.name}`,
       `${es ? 'Ruta del proyecto' : 'Project path'}: ${workspace.path}`,
-      buildAgentSessionBindingMarker({ agent, workspace }),
+      buildAgentSessionBindingMarker({ agent, sessionId, workspace }),
       '',
       `${es ? 'Tu rol' : 'Your role'}: ${
         agent.role === 'orchestrator'
@@ -66,12 +76,30 @@ export const buildAgentStartupInstructions = ({
       '',
     ]
     if (agent.role === 'orchestrator') {
+      if (newSession) {
+        lines.push(
+          es ? 'Límite de la sesión nueva:' : 'New session boundary:',
+          es
+            ? '- La memoria del proyecto es material de referencia, no una solicitud activa.'
+            : '- Project memory is reference material, not an active request.',
+          es
+            ? '- Al iniciar, no revises ni resumas trabajo existente y no preguntes si debe continuarse.'
+            : '- At startup, do not inspect or summarize existing work and do not ask whether to continue it.',
+          es
+            ? '- Responde solamente `Listo.` a este mensaje de inicio y espera la primera solicitud del usuario.'
+            : "- Reply only `Ready.` to this startup message and wait for the user's first request.",
+          es
+            ? '- Usa la memoria previa solamente cuando la solicitud del usuario la vuelva relevante.'
+            : "- Use prior project memory only when the user's request makes it relevant.",
+          ''
+        )
+      }
       lines.push(
         es ? 'Tus responsabilidades:' : 'Your responsibilities:',
         es
           ? '- Responder al usuario, aclarar objetivos y dividir el trabajo'
           : '- Respond to the user, clarify goals, and split work',
-        `- ${es ? 'Mantener' : 'Maintain'} ${TASKS_RELATIVE_PATH}`,
+        `- ${es ? 'Mantener' : 'Maintain'} ${tasksPath}`,
         es
           ? '- Delegar por nombre del worker y continuar según sus reportes'
           : '- Dispatch by worker name and continue from their reports',
@@ -116,17 +144,27 @@ export const buildAgentStartupInstructions = ({
     buildAgentLegacyIdentityMarker({ agent, workspace }),
     `当前 workspace: ${workspace.name}`,
     `项目路径: ${workspace.path}`,
-    buildAgentSessionBindingMarker({ agent, workspace }),
+    buildAgentSessionBindingMarker({ agent, sessionId, workspace }),
     '',
     `你的角色：${agent.description}`,
     '',
   ]
 
   if (agent.role === 'orchestrator') {
+    if (newSession) {
+      lines.push(
+        '新会话边界：',
+        '- 项目记忆只是参考资料，不是当前任务。',
+        '- 启动时不要检查或总结已有工作，也不要询问是否继续以前的工作。',
+        '- 对这条启动消息只回复“已就绪。”，然后等待 user 的第一条请求。',
+        '- 只有当 user 的请求使旧记忆相关时，才使用项目记忆。',
+        ''
+      )
+    }
     lines.push(
       '你的职责：',
       '- 直接响应 user，澄清需求并拆解任务',
-      `- 维护 ${TASKS_RELATIVE_PATH}`,
+      `- 维护 ${tasksPath}`,
       '- 按 worker 名称派单，并根据汇报推进下一步',
       '',
       '可用 team 命令：',

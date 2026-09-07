@@ -2,12 +2,14 @@ import { randomUUID } from 'node:crypto'
 
 import type { Database } from 'better-sqlite3'
 import { ConflictError } from './http-errors.js'
+import { toSessionScopeId } from './session-scope.js'
 
 export interface WorkspaceSessionSummary {
   active: boolean
   createdAt: number
   id: string
   name: string
+  running: boolean
   updatedAt: number
   workspaceId: string
 }
@@ -62,6 +64,7 @@ const toSummary = (row: WorkspaceSessionRow): WorkspaceSessionSummary => ({
   createdAt: row.created_at,
   id: row.id,
   name: row.name,
+  running: false,
   updatedAt: row.updated_at,
   workspaceId: row.workspace_id,
 })
@@ -101,10 +104,14 @@ export const createWorkspaceSessionStore = (db: Database) => {
     return row
   }
 
-  const snapshotValues = (workspaceId: string, state: WorkspaceSessionState) => ({
+  const snapshotValues = (
+    workspaceId: string,
+    state: WorkspaceSessionState,
+    sessionId?: string
+  ) => ({
     agentSessionIdsJson: JSON.stringify(state.agentSessionIds),
-    dispatchesJson: JSON.stringify(readDispatches(workspaceId)),
-    messagesJson: JSON.stringify(readMessages(workspaceId)),
+    dispatchesJson: JSON.stringify(readDispatches(toSessionScopeId(workspaceId, sessionId))),
+    messagesJson: JSON.stringify(readMessages(toSessionScopeId(workspaceId, sessionId))),
     tasksContent: state.tasksContent,
   })
 
@@ -141,11 +148,25 @@ export const createWorkspaceSessionStore = (db: Database) => {
       now,
       now
     )
+    const scopeId = toSessionScopeId(workspaceId, row.id)
+    db.prepare('UPDATE messages SET workspace_id = ? WHERE workspace_id = ?').run(
+      scopeId,
+      workspaceId
+    )
+    db.prepare('UPDATE dispatches SET workspace_id = ? WHERE workspace_id = ?').run(
+      scopeId,
+      workspaceId
+    )
+    db.prepare(
+      `INSERT OR IGNORE INTO agent_sessions (agent_id, workspace_id, last_session_id, updated_at)
+       SELECT agent_id, ?, last_session_id, updated_at
+       FROM agent_sessions WHERE workspace_id = ?`
+    ).run(scopeId, workspaceId)
     return row
   }
 
   const updateSnapshot = (workspaceId: string, sessionId: string, state: WorkspaceSessionState) => {
-    const snapshot = snapshotValues(workspaceId, state)
+    const snapshot = snapshotValues(workspaceId, state, sessionId)
     db.prepare(
       `UPDATE workspace_sessions
        SET tasks_content = ?, agent_session_ids_json = ?, messages_json = ?,
@@ -162,53 +183,6 @@ export const createWorkspaceSessionStore = (db: Database) => {
     )
   }
 
-  const replaceOperationalRows = (workspaceId: string, row: WorkspaceSessionRow) => {
-    db.prepare('DELETE FROM messages WHERE workspace_id = ?').run(workspaceId)
-    db.prepare('DELETE FROM dispatches WHERE workspace_id = ?').run(workspaceId)
-
-    const insertMessage = db.prepare(
-      `INSERT INTO messages (
-        workspace_id, worker_id, type, from_agent_id, to_agent_id, text, status, artifacts, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    )
-    for (const message of parseJson<MessageSnapshot[]>(row.messages_json)) {
-      insertMessage.run(
-        workspaceId,
-        message.worker_id,
-        message.type,
-        message.from_agent_id,
-        message.to_agent_id,
-        message.text,
-        message.status,
-        message.artifacts,
-        message.created_at
-      )
-    }
-
-    const insertDispatch = db.prepare(
-      `INSERT INTO dispatches (
-        id, workspace_id, from_agent_id, to_agent_id, text, status, created_at,
-        delivered_at, submitted_at, reported_at, report_text, artifacts
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    )
-    for (const dispatch of parseJson<DispatchSnapshot[]>(row.dispatches_json)) {
-      insertDispatch.run(
-        dispatch.id,
-        workspaceId,
-        dispatch.from_agent_id,
-        dispatch.to_agent_id,
-        dispatch.text,
-        dispatch.status,
-        dispatch.created_at,
-        dispatch.delivered_at,
-        dispatch.submitted_at,
-        dispatch.reported_at,
-        dispatch.report_text,
-        dispatch.artifacts
-      )
-    }
-  }
-
   return {
     ensureActiveSession(workspaceId: string, state: WorkspaceSessionState) {
       return toSummary(ensureActive(workspaceId, state))
@@ -221,6 +195,9 @@ export const createWorkspaceSessionStore = (db: Database) => {
           )
           .all(workspaceId) as WorkspaceSessionRow[]
       ).map(toSummary)
+    },
+    getActiveSessionId(workspaceId: string, state: WorkspaceSessionState) {
+      return ensureActive(workspaceId, state).id
     },
     createSession(
       workspaceId: string,
@@ -247,8 +224,6 @@ export const createWorkspaceSessionStore = (db: Database) => {
             messages_json, dispatches_json, active, created_at, updated_at
           ) VALUES (?, ?, ?, '', '{}', '[]', '[]', 1, ?, ?)`
         ).run(id, workspaceId, name, now, now)
-        db.prepare('DELETE FROM messages WHERE workspace_id = ?').run(workspaceId)
-        db.prepare('DELETE FROM dispatches WHERE workspace_id = ?').run(workspaceId)
         return toSummary(getRow(workspaceId, id))
       })()
     },
@@ -260,8 +235,7 @@ export const createWorkspaceSessionStore = (db: Database) => {
           return toSummary(getRow(workspaceId, sessionId))
         }
         updateSnapshot(workspaceId, current.id, currentState)
-        const target = getRow(workspaceId, sessionId)
-        replaceOperationalRows(workspaceId, target)
+        getRow(workspaceId, sessionId)
         db.prepare('UPDATE workspace_sessions SET active = 0 WHERE workspace_id = ?').run(
           workspaceId
         )
@@ -281,13 +255,31 @@ export const createWorkspaceSessionStore = (db: Database) => {
     deleteSession(workspaceId: string, sessionId: string) {
       const row = getRow(workspaceId, sessionId)
       if (row.active === 1) throw new ConflictError('The active session cannot be deleted')
-      db.prepare('DELETE FROM workspace_sessions WHERE workspace_id = ? AND id = ?').run(
-        workspaceId,
-        sessionId
-      )
+      const scopeId = toSessionScopeId(workspaceId, sessionId)
+      db.transaction(() => {
+        db.prepare('DELETE FROM messages WHERE workspace_id = ?').run(scopeId)
+        db.prepare('DELETE FROM dispatches WHERE workspace_id = ?').run(scopeId)
+        db.prepare('DELETE FROM agent_sessions WHERE workspace_id = ?').run(scopeId)
+        db.prepare('DELETE FROM workspace_sessions WHERE workspace_id = ? AND id = ?').run(
+          workspaceId,
+          sessionId
+        )
+      })()
     },
     deleteWorkspaceSessions(workspaceId: string) {
-      db.prepare('DELETE FROM workspace_sessions WHERE workspace_id = ?').run(workspaceId)
+      const sessionIds = (
+        db
+          .prepare('SELECT id FROM workspace_sessions WHERE workspace_id = ?')
+          .all(workspaceId) as Array<{ id: string }>
+      ).map((row) => toSessionScopeId(workspaceId, row.id))
+      db.transaction(() => {
+        for (const scopeId of sessionIds) {
+          db.prepare('DELETE FROM messages WHERE workspace_id = ?').run(scopeId)
+          db.prepare('DELETE FROM dispatches WHERE workspace_id = ?').run(scopeId)
+          db.prepare('DELETE FROM agent_sessions WHERE workspace_id = ?').run(scopeId)
+        }
+        db.prepare('DELETE FROM workspace_sessions WHERE workspace_id = ?').run(workspaceId)
+      })()
     },
   }
 }

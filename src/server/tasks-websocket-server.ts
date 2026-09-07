@@ -30,7 +30,7 @@ export interface TasksWebSocketServer {
 export const createTasksWebSocketServer = (
   server: Server,
   store: RuntimeStore,
-  tasksFileService: Pick<TasksFileService, 'readTasks'>
+  tasksFileService: Pick<TasksFileService, 'readSessionTasks'>
 ): TasksWebSocketServer => {
   const wss = new WebSocketServer({ noServer: true })
   const socketsByWorkspaceId = new Map<string, Set<WsSocket>>()
@@ -78,7 +78,10 @@ export const createTasksWebSocketServer = (
           ws.send(
             JSON.stringify({
               type: 'tasks-snapshot',
-              content: tasksFileService.readTasks(workspacePath),
+              content: tasksFileService.readSessionTasks(
+                workspacePath,
+                store.getActiveWorkspaceSessionId(workspaceId)
+              ),
             })
           )
         } catch {

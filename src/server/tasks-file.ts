@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 
 import { buildProtocolDoc } from './hive-team-guidance.js'
@@ -7,6 +7,9 @@ interface TasksFileService {
   archiveAndResetTasks: (workspacePath: string) => { archivedPath: string | null; content: string }
   readTasks: (workspacePath: string) => string
   writeTasks: (workspacePath: string, content: string) => void
+  readSessionTasks: (workspacePath: string, sessionId: string, initial?: string) => string
+  writeSessionTasks: (workspacePath: string, sessionId: string, content: string) => void
+  deleteSessionTasks: (workspacePath: string, sessionId: string) => void
 }
 
 export const HIVE_DIR_NAME = '.hive'
@@ -15,9 +18,14 @@ export const TASKS_RELATIVE_PATH = `${HIVE_DIR_NAME}/${TASKS_FILE_NAME}`
 export const PROTOCOL_FILE_NAME = 'PROTOCOL.md'
 export const PROTOCOL_RELATIVE_PATH = `${HIVE_DIR_NAME}/${PROTOCOL_FILE_NAME}`
 export const TASKS_HISTORY_DIR_NAME = 'history'
+export const getSessionTasksRelativePath = (sessionId: string) =>
+  `${HIVE_DIR_NAME}/sessions/${sessionId}/${TASKS_FILE_NAME}`
 
 export const getTasksFilePath = (workspacePath: string) =>
   join(workspacePath, HIVE_DIR_NAME, TASKS_FILE_NAME)
+
+export const getSessionTasksFilePath = (workspacePath: string, sessionId: string) =>
+  join(workspacePath, getSessionTasksRelativePath(sessionId))
 
 export const getProtocolFilePath = (workspacePath: string) =>
   join(workspacePath, HIVE_DIR_NAME, PROTOCOL_FILE_NAME)
@@ -83,6 +91,25 @@ export const createTasksFileService = ({ now = () => new Date() } = {}): TasksFi
     writeTasks(workspacePath, content) {
       ensureTasksDir(workspacePath)
       writeFileSync(getTasksFilePath(workspacePath), content, 'utf8')
+    },
+    readSessionTasks(workspacePath, sessionId, initial = '') {
+      const path = getSessionTasksFilePath(workspacePath, sessionId)
+      if (!existsSync(path)) {
+        mkdirSync(dirname(path), { recursive: true })
+        writeFileSync(path, initial, 'utf8')
+      }
+      return readFileSync(path, 'utf8')
+    },
+    writeSessionTasks(workspacePath, sessionId, content) {
+      const path = getSessionTasksFilePath(workspacePath, sessionId)
+      mkdirSync(dirname(path), { recursive: true })
+      writeFileSync(path, content, 'utf8')
+    },
+    deleteSessionTasks(workspacePath, sessionId) {
+      rmSync(dirname(getSessionTasksFilePath(workspacePath, sessionId)), {
+        force: true,
+        recursive: true,
+      })
     },
   }
 }

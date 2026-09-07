@@ -17,6 +17,7 @@ export interface SendTaskBody {
   token?: string
   to: string
   text: string
+  session_id?: string
 }
 
 export interface StartWorkerBody {
@@ -24,6 +25,7 @@ export interface StartWorkerBody {
   from_agent_id: string
   token?: string
   worker_name: string
+  session_id?: string
 }
 
 export interface ReportTaskBody {
@@ -34,6 +36,7 @@ export interface ReportTaskBody {
   result: string
   status?: string
   artifacts?: unknown[]
+  session_id?: string
 }
 
 export interface CancelTaskBody {
@@ -42,6 +45,7 @@ export interface CancelTaskBody {
   from_agent_id: string
   token?: string
   reason?: string
+  session_id?: string
 }
 
 export interface CreateWorkspaceBody {

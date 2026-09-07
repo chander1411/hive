@@ -12,7 +12,7 @@ export interface RestartPolicyInput {
   insertMessage: (record: MessageLogRecord) => MessageLogHandle
   listAgentRuns: (agentId: string) => PersistedAgentRun[]
   listMessagesForRecovery: (workspaceId: string, sinceMs: number) => RecoveryMessage[]
-  readTasks: (workspacePath: string) => string
+  readTasks: (workspacePath: string, sessionId?: string) => string
   getPromptLanguage?: () => PromptLanguage
 }
 

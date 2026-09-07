@@ -52,12 +52,13 @@ const resolveLaunchPreset = (
 
 const createSessionCaptureDiscriminator = (
   workspace: WorkspaceSummary,
-  agent: AgentSummary | undefined
+  agent: AgentSummary | undefined,
+  hiveSessionId?: string
 ) => {
   if (!agent) return undefined
   return {
     contentIncludes: [
-      buildAgentSessionBindingMarker({ agent, workspace }),
+      buildAgentSessionBindingMarker({ agent, sessionId: hiveSessionId, workspace }),
       buildAgentLegacyIdentityMarker({ agent, workspace }),
     ],
   }
@@ -70,10 +71,11 @@ export const buildAgentRunBootstrap = (
   sessionStore: AgentSessionStorePort,
   getCommandPreset: (id: string) => CommandPresetRecord | undefined,
   agent?: AgentSummary,
-  freshStart = false
+  freshStart = false,
+  hiveSessionId?: string
 ) => {
   const preset = resolveLaunchPreset(config, getCommandPreset)
-  const discriminator = createSessionCaptureDiscriminator(workspace, agent)
+  const discriminator = createSessionCaptureDiscriminator(workspace, agent, hiveSessionId)
   const startConfig = withPresetResumeArgs(
     freshStart ? withoutSessionResumeArgs(config) : config,
     preset,

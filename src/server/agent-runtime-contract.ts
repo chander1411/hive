@@ -2,11 +2,11 @@ import type { WorkspaceSummary } from '../shared/types.js'
 
 import type { PersistedAgentRun } from './agent-run-store.js'
 import type { LiveAgentRun } from './agent-runtime-types.js'
-import type { AgentTokenRegistry } from './agent-tokens.js'
 import type { PtyOutputBus } from './pty-output-bus.js'
 
 interface StartAgentOptions {
   hivePort: string
+  sessionId?: string | undefined
 }
 
 export interface AgentRuntime {
@@ -19,7 +19,11 @@ export interface AgentRuntime {
     input: import('./agent-run-store.js').AgentLaunchConfigInput
   ) => void
   deleteAgentLaunchConfig: (workspaceId: string, agentId: string) => void
-  getActiveRunByAgentId: (workspaceId: string, agentId: string) => LiveAgentRun | undefined
+  getActiveRunByAgentId: (
+    workspaceId: string,
+    agentId: string,
+    sessionId?: string
+  ) => LiveAgentRun | undefined
   getLastSessionId: (workspaceId: string, agentId: string) => string | undefined
   peekAgentLaunchConfig: (
     workspaceId: string,
@@ -30,7 +34,7 @@ export interface AgentRuntime {
   listAgentRuns: (agentId: string) => PersistedAgentRun[]
   markAgentForFreshStart: (workspaceId: string, agentId: string) => void
   pauseRun: (runId: string) => void
-  peekAgentToken: (agentId: string) => string | undefined
+  peekAgentToken: (agentId: string, sessionId?: string) => string | undefined
   resizeAgentRun: (runId: string, cols: number, rows: number) => void
   resumeRun: (runId: string) => void
   setLastSessionId: (workspaceId: string, agentId: string, sessionId: string) => void
@@ -40,15 +44,18 @@ export interface AgentRuntime {
     input: StartAgentOptions
   ) => Promise<LiveAgentRun>
   stopAgentRun: (runId: string) => void
-  stopAgentAndWait: (workspaceId: string, agentId: string) => Promise<void>
-  validateAgentToken: AgentTokenRegistry['validate']
+  stopAgentAcrossSessions: (workspaceId: string, agentId: string) => void
+  stopAgentAndWait: (workspaceId: string, agentId: string, sessionId?: string) => Promise<void>
+  stopSessionAndWait: (workspaceId: string, sessionId: string) => Promise<void>
+  stopWorkspaceAndWait: (workspaceId: string) => Promise<void>
+  validateAgentToken: (agentId: string, token: string | undefined, sessionId?: string) => boolean
   writeReportPrompt: (
     workspaceId: string,
     workerName: string,
     workerId: string,
     text: string,
     artifacts: string[],
-    input?: { requireActiveRun?: boolean }
+    input?: { requireActiveRun?: boolean; sessionId?: string | undefined }
   ) => void
   writeStatusPrompt: (
     workspaceId: string,
@@ -56,7 +63,7 @@ export interface AgentRuntime {
     workerId: string,
     text: string,
     artifacts: string[],
-    input?: { requireActiveRun?: boolean }
+    input?: { requireActiveRun?: boolean; sessionId?: string | undefined }
   ) => void
   writeSendPrompt: (
     workspaceId: string,
@@ -64,16 +71,17 @@ export interface AgentRuntime {
     dispatchId: string,
     fromAgentName: string,
     workerDescription: string,
-    text: string
+    text: string,
+    sessionId?: string
   ) => void
   writeCancelPrompt: (
     workspaceId: string,
     workerId: string,
     dispatchId: string,
     reason: string,
-    input?: { requireActiveRun?: boolean }
+    input?: { requireActiveRun?: boolean; sessionId?: string | undefined }
   ) => void
-  writeUserInputPrompt: (workspaceId: string, text: string) => void
+  writeUserInputPrompt: (workspaceId: string, text: string, sessionId?: string) => void
 }
 
 export type { StartAgentOptions }

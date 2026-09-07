@@ -25,22 +25,25 @@ export const teamRoutes: RouteDefinition[] = [
     const projectId = requireNonEmptyString(body.project_id, 'project_id')
     const fromAgentId = requireNonEmptyString(body.from_agent_id, 'from_agent_id')
     const workerName = requireNonEmptyString(body.worker_name, 'worker_name')
+    const sessionId = typeof body.session_id === 'string' ? body.session_id : undefined
     const agent = authenticateCliAgent({
       fromAgentId,
       getAgent: store.getAgent,
       token: body.token,
       validateToken: store.validateAgentToken,
       workspaceId: projectId,
+      sessionId,
     })
     requireCommandForRole(agent, 'start')
-    const worker = store.listWorkers(projectId).find((item) => item.name === workerName)
+    const worker = store.listWorkers(projectId, sessionId).find((item) => item.name === workerName)
     if (!worker) throw new BadRequestError(`Worker not found: ${workerName}`)
     if (!store.peekAgentLaunchConfig(projectId, worker.id)) {
       throw new ConflictError('No worker launch config available')
     }
-    const existingRun = store.getActiveRunByAgentId(projectId, worker.id)
+    const existingRun = store.getActiveRunByAgentId(projectId, worker.id, sessionId)
     const run = await store.startAgent(projectId, worker.id, {
       hivePort: String(request.socket.localPort ?? ''),
+      sessionId,
     })
     sendJson(response, 202, {
       already_running: existingRun !== undefined,
@@ -55,17 +58,20 @@ export const teamRoutes: RouteDefinition[] = [
     const fromAgentId = requireNonEmptyString(body.from_agent_id, 'from_agent_id')
     const to = requireNonEmptyString(body.to, 'to')
     const text = requireNonEmptyString(body.text, 'text')
+    const sessionId = typeof body.session_id === 'string' ? body.session_id : undefined
     const agent = authenticateCliAgent({
       fromAgentId,
       getAgent: store.getAgent,
       token: body.token,
       validateToken: store.validateAgentToken,
       workspaceId: projectId,
+      sessionId,
     })
     requireCommandForRole(agent, 'send')
     const dispatch = await store.dispatchTaskByWorkerName(projectId, to, text, {
       fromAgentId,
       hivePort: String(request.socket.localPort ?? ''),
+      sessionId,
     })
 
     sendJson(response, 202, { dispatch_id: dispatch.id, ok: true })
@@ -76,15 +82,17 @@ export const teamRoutes: RouteDefinition[] = [
     const fromAgentId = requireNonEmptyString(body.from_agent_id, 'from_agent_id')
     const dispatchId = requireNonEmptyString(body.dispatch_id, 'dispatch_id')
     const reason = requireNonEmptyString(body.reason, 'reason')
+    const sessionId = typeof body.session_id === 'string' ? body.session_id : undefined
     const agent = authenticateCliAgent({
       fromAgentId,
       getAgent: store.getAgent,
       token: body.token,
       validateToken: store.validateAgentToken,
       workspaceId: projectId,
+      sessionId,
     })
     requireCommandForRole(agent, 'cancel')
-    const result = store.cancelTask(projectId, dispatchId, { fromAgentId, reason })
+    const result = store.cancelTask(projectId, dispatchId, { fromAgentId, reason, sessionId })
     sendJson(response, 202, {
       dispatch_id: result.dispatch?.id ?? null,
       forward_error: result.forwardError,
@@ -97,12 +105,14 @@ export const teamRoutes: RouteDefinition[] = [
     const projectId = requireNonEmptyString(body.project_id, 'project_id')
     const fromAgentId = requireNonEmptyString(body.from_agent_id, 'from_agent_id')
     const resultText = requireNonEmptyString(body.result, 'result')
+    const sessionId = typeof body.session_id === 'string' ? body.session_id : undefined
     const agent = authenticateCliAgent({
       fromAgentId,
       getAgent: store.getAgent,
       token: body.token,
       validateToken: store.validateAgentToken,
       workspaceId: projectId,
+      sessionId,
     })
     requireCommandForRole(agent, 'report')
     const reportInput = {
@@ -110,6 +120,7 @@ export const teamRoutes: RouteDefinition[] = [
       ...(typeof body.dispatch_id === 'string' ? { dispatchId: body.dispatch_id } : {}),
       requireActiveRun: true,
       text: resultText,
+      sessionId,
     }
     if (typeof body.status === 'string') {
       const result = store.reportTask(projectId, fromAgentId, {
@@ -139,18 +150,21 @@ export const teamRoutes: RouteDefinition[] = [
     const projectId = requireNonEmptyString(body.project_id, 'project_id')
     const fromAgentId = requireNonEmptyString(body.from_agent_id, 'from_agent_id')
     const resultText = requireNonEmptyString(body.result, 'result')
+    const sessionId = typeof body.session_id === 'string' ? body.session_id : undefined
     const agent = authenticateCliAgent({
       fromAgentId,
       getAgent: store.getAgent,
       token: body.token,
       validateToken: store.validateAgentToken,
       workspaceId: projectId,
+      sessionId,
     })
     requireCommandForRole(agent, 'status')
     const result = store.statusTask(projectId, fromAgentId, {
       artifacts: getArtifacts(body.artifacts),
       requireActiveRun: true,
       text: resultText,
+      sessionId,
     })
     sendJson(response, 202, {
       dispatch_id: result.dispatch?.id ?? null,

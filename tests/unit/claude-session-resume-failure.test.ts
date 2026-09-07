@@ -33,7 +33,14 @@ afterEach(() => {
 })
 
 describe('claude session resume failure', () => {
-  test('clears stale session id after resumed Claude run exits non-zero and next start is bare', async () => {
+  test.each([
+    { exitCode: 1, expectedStoredId: undefined, expectedToResumeAgain: false },
+    { exitCode: null, expectedStoredId: 'stale', expectedToResumeAgain: true },
+  ])('handles resumed Claude exit code $exitCode without treating a signal exit as a stale session', async ({
+    exitCode,
+    expectedStoredId,
+    expectedToResumeAgain,
+  }) => {
     const cwd = '/tmp/hive-resume-failure-workspace'
     const staleSessionId = '77777777-7777-4777-8777-777777777777'
     createClaudeSessionRoot(cwd, staleSessionId)
@@ -60,7 +67,7 @@ describe('claude session resume failure', () => {
       {
         getRun: (runId) => ({
           agentId: 'agent-1',
-          exitCode: runId === 'run-1' ? 1 : null,
+          exitCode: runId === 'run-1' ? exitCode : null,
           output: '',
           pid: 1,
           runId,
@@ -71,15 +78,15 @@ describe('claude session resume failure', () => {
           const runId = `run-${runIndex}`
           startArgs.push(input.args)
           if (runId === 'run-1') {
-            input.onExit?.({ runId, exitCode: 1 })
+            input.onExit?.({ runId, exitCode })
           }
           return {
             agentId: 'agent-1',
-            exitCode: runId === 'run-1' ? 1 : null,
+            exitCode: null,
             output: '',
             pid: 1,
             runId,
-            status: runId === 'run-1' ? 'error' : 'starting',
+            status: 'starting',
           }
         },
         getOutputBus: () => outputBus,
@@ -120,13 +127,19 @@ describe('claude session resume failure', () => {
     await runtime.startAgent({ id: 'ws-1', name: 'A', path: cwd }, 'agent-1', { hivePort: '4010' })
 
     expect(startArgs[0]).toEqual(['--resume', staleSessionId, '--dangerously-skip-permissions'])
-    expect(startArgs[1]).toEqual(['--dangerously-skip-permissions'])
-    expect(sessionStore.getLastSessionId('ws-1', 'agent-1')).toBeUndefined()
+    expect(startArgs[1]).toEqual(
+      expectedToResumeAgain
+        ? ['--resume', staleSessionId, '--dangerously-skip-permissions']
+        : ['--dangerously-skip-permissions']
+    )
+    expect(sessionStore.getLastSessionId('ws-1', 'agent-1')).toBe(
+      expectedStoredId === 'stale' ? staleSessionId : undefined
+    )
     expect(
       db.prepare('SELECT last_session_id FROM workers WHERE id = ?').get('agent-1') as {
         last_session_id: string | null
       }
-    ).toEqual({ last_session_id: null })
+    ).toEqual({ last_session_id: expectedStoredId === 'stale' ? staleSessionId : null })
 
     db.close()
   })

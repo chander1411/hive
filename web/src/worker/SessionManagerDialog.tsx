@@ -89,6 +89,12 @@ export const SessionManagerDialog = ({
                           {session.active ? (
                             <Check size={13} aria-label={t('orchestrator.activeSession')} />
                           ) : null}
+                          {session.running ? (
+                            <span className="flex items-center gap-1 text-xs text-green-400">
+                              <span className="h-1.5 w-1.5 rounded-full bg-green-400" />
+                              {t('common.running')}
+                            </span>
+                          ) : null}
                         </span>
                         <span className="text-xs text-ter">
                           {new Date(session.createdAt).toLocaleString()}

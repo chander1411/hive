@@ -146,11 +146,16 @@ export const createAgentStdinDispatcher = ({
     workspaceId: string,
     agentId: string,
     text: string,
-    input: { requireActiveRun?: boolean } = {}
+    input: { requireActiveRun?: boolean; sessionId?: string | undefined } = {}
   ) => {
     const run = registry
       .list()
-      .filter((item) => item.agentId === agentId && getWorkspaceId(item.agentId) === workspaceId)
+      .filter(
+        (item) =>
+          item.agentId === agentId &&
+          (item.workspaceId === workspaceId || getWorkspaceId(item.agentId) === workspaceId) &&
+          (input.sessionId === undefined || item.sessionId === input.sessionId)
+      )
       .sort((left, right) => right.startedAt - left.startedAt)
       .find((item) => {
         const status = syncRun(item).status
@@ -184,7 +189,7 @@ export const createAgentStdinDispatcher = ({
       workerName: string,
       text: string,
       artifacts: string[],
-      input: { requireActiveRun?: boolean } = {}
+      input: { requireActiveRun?: boolean; sessionId?: string | undefined } = {}
     ) {
       writeToActiveAgentRun(
         workspaceId,
@@ -198,7 +203,7 @@ export const createAgentStdinDispatcher = ({
       workerName: string,
       text: string,
       artifacts: string[],
-      input: { requireActiveRun?: boolean } = {}
+      input: { requireActiveRun?: boolean; sessionId?: string | undefined } = {}
     ) {
       writeToActiveAgentRun(
         workspaceId,
@@ -213,7 +218,8 @@ export const createAgentStdinDispatcher = ({
       dispatchId: string,
       fromAgentName: string,
       workerDescription: string,
-      text: string
+      text: string,
+      sessionId?: string
     ) {
       writeToActiveAgentRun(
         workspaceId,
@@ -225,7 +231,7 @@ export const createAgentStdinDispatcher = ({
           text,
           getPromptLanguage()
         ),
-        { requireActiveRun: true }
+        { requireActiveRun: true, sessionId }
       )
     },
     writeCancelPrompt(
@@ -233,7 +239,7 @@ export const createAgentStdinDispatcher = ({
       workerId: string,
       dispatchId: string,
       reason: string,
-      input: { requireActiveRun?: boolean } = {}
+      input: { requireActiveRun?: boolean; sessionId?: string | undefined } = {}
     ) {
       writeToActiveAgentRun(
         workspaceId,
@@ -242,11 +248,12 @@ export const createAgentStdinDispatcher = ({
         input
       )
     },
-    writeUserInputPrompt(workspaceId: string, text: string) {
+    writeUserInputPrompt(workspaceId: string, text: string, sessionId?: string) {
       writeToActiveAgentRun(
         workspaceId,
         `${workspaceId}:orchestrator`,
-        buildOrchestratorUserInputPayload(text, getPromptLanguage())
+        buildOrchestratorUserInputPayload(text, getPromptLanguage()),
+        { sessionId }
       )
     },
   }

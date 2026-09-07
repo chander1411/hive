@@ -237,7 +237,9 @@ export const useOrchestratorPaneState = ({
         .then((result) => {
           setOptimisticRun({ workspaceId, runId: result.runId })
           setSessions((current) =>
-            current.map((session) => ({ ...session, active: session.id === result.session.id }))
+            current.map((session) =>
+              session.id === result.session.id ? result.session : { ...session, active: false }
+            )
           )
           onAfterStart?.({ ok: true, error: null, run_id: result.runId })
         })

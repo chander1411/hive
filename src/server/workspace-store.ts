@@ -118,18 +118,18 @@ export const createWorkspaceStore = (
       const workspace = getWorkspace(workspaceId)
       getWorkerRecord(workspaces, workspaceId, workerId)
       db.transaction(() => {
-        db.prepare('DELETE FROM messages WHERE workspace_id = ? AND worker_id = ?').run(
-          workspaceId,
-          workerId
-        )
+        db.prepare(
+          `DELETE FROM messages
+           WHERE (workspace_id = ? OR workspace_id LIKE ?) AND worker_id = ?`
+        ).run(workspaceId, `${workspaceId}::hive-session::%`, workerId)
         db.prepare('DELETE FROM agent_launch_configs WHERE workspace_id = ? AND agent_id = ?').run(
           workspaceId,
           workerId
         )
-        db.prepare('DELETE FROM agent_sessions WHERE workspace_id = ? AND agent_id = ?').run(
-          workspaceId,
-          workerId
-        )
+        db.prepare(
+          `DELETE FROM agent_sessions
+           WHERE (workspace_id = ? OR workspace_id LIKE ?) AND agent_id = ?`
+        ).run(workspaceId, `${workspaceId}::hive-session::%`, workerId)
         db.prepare('DELETE FROM agent_runs WHERE agent_id = ?').run(workerId)
         db.prepare('DELETE FROM workers WHERE workspace_id = ? AND id = ?').run(
           workspaceId,

@@ -40,12 +40,14 @@ beforeEach(async () => {
   const workspace = (await workspaceResponse.json()) as { id: string }
 
   const orchestratorId = `${workspace.id}:orchestrator`
+  const sessionId = server.store.getActiveWorkspaceSessionId(workspace.id)
   process.env = {
     ...originalEnv,
     HIVE_AGENT_ID: orchestratorId,
     HIVE_AGENT_TOKEN: 'placeholder-replaced-after-start',
     HIVE_PORT: server.baseUrl.split(':').at(-1) ?? '',
     HIVE_PROJECT_ID: workspace.id,
+    HIVE_SESSION_ID: sessionId,
   }
 
   await fetch(`${server.baseUrl}/api/workspaces/${workspace.id}/workers`, {

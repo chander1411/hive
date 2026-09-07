@@ -86,7 +86,10 @@ export const createRuntimeStoreServices = (
   const workspaceSessionStore = createWorkspaceSessionStore(db)
   const startExistingWorkspaceWatches = () => {
     for (const workspace of workspaceStore.listWorkspaces()) {
-      void tasksFileWatcher.start(workspace.id, workspace.path)
+      const sessionId = workspaceSessionStore
+        .listSessions(workspace.id)
+        .find((session) => session.active)?.id
+      void tasksFileWatcher.start(workspace.id, workspace.path, sessionId)
     }
   }
   const restartPolicy = buildRuntimeRestartPolicy({
@@ -104,9 +107,10 @@ export const createRuntimeStoreServices = (
     agentRunStore,
     agentSessionStore,
     settings.getCommandPreset,
-    (workspaceId, agentId) => {
-      workerOutputTracker?.detach(workspaceId, agentId)
+    (workspaceId, agentId, sessionId) => {
+      workerOutputTracker?.detach(workspaceId, agentId, sessionId)
       if (!workspaceStore.hasAgent(workspaceId, agentId)) return
+      if (agentRuntime.getActiveRunByAgentId(workspaceId, agentId)) return
       workspaceStore.markAgentStopped(workspaceId, agentId)
     },
     restartPolicy,
@@ -154,7 +158,7 @@ export const createRuntimeStoreLifecycle = ({
   const startAgent = async (
     workspaceId: string,
     agentId: string,
-    input: { hivePort: string }
+    input: { hivePort: string; sessionId?: string | undefined }
   ): Promise<LiveAgentRun> => {
     services.workspaceStore.getAgent(workspaceId, agentId)
     services.workspaceStore.markAgentStarted(workspaceId, agentId)
@@ -167,7 +171,13 @@ export const createRuntimeStoreLifecycle = ({
       if (run.status === 'error') {
         services.workspaceStore.markAgentStopped(workspaceId, agentId)
       } else {
-        services.workerOutputTracker?.attach(workspaceId, agentId, run.runId, run.output)
+        services.workerOutputTracker?.attach(
+          workspaceId,
+          agentId,
+          run.runId,
+          run.output,
+          run.sessionId
+        )
       }
       return run
     } catch (error) {
@@ -184,12 +194,20 @@ export const createRuntimeStoreLifecycle = ({
         .getWorkspaceSnapshot(workspace.id)
         .agents.filter(
           (agent) =>
-            !services.agentRuntime.getActiveRunByAgentId(workspace.id, agent.id) &&
-            services.agentRuntime.peekAgentLaunchConfig(workspace.id, agent.id)
+            !services.agentRuntime.getActiveRunByAgentId(
+              workspace.id,
+              agent.id,
+              services.workspaceSessionStore
+                .listSessions(workspace.id)
+                .find((session) => session.active)?.id
+            ) && services.agentRuntime.peekAgentLaunchConfig(workspace.id, agent.id)
         )
         .map(async (agent) => {
           try {
-            const run = await startAgent(workspace.id, agent.id, input)
+            const sessionId = services.workspaceSessionStore
+              .listSessions(workspace.id)
+              .find((session) => session.active)?.id
+            const run = await startAgent(workspace.id, agent.id, { ...input, sessionId })
             return {
               agent_id: agent.id,
               error: null,
@@ -237,23 +255,28 @@ export const createRuntimeStoreLifecycle = ({
       if (!agentManager) throw new Error('Agent manager is required for PTY output subscriptions')
       return agentManager.getOutputBus()
     },
-    listTerminalRuns: (workspaceId: string) => [
-      ...services.workspaceStore.getWorkspaceSnapshot(workspaceId).agents.flatMap((agent) => {
-        const run = services.agentRuntime.getActiveRunByAgentId(workspaceId, agent.id)
-        if (!run) return []
-        const launchConfig = services.agentRuntime.peekAgentLaunchConfig(workspaceId, agent.id)
-        return [
-          {
-            agent_id: agent.id,
-            agent_name: agent.name,
-            run_id: run.runId,
-            status: run.status,
-            terminal_input_profile: resolveTerminalInputProfile(launchConfig),
-          },
-        ]
-      }),
-      ...services.shellRuntime.listTerminalRuns(workspaceId),
-    ],
+    listTerminalRuns: (workspaceId: string) => {
+      const sessionId = services.workspaceSessionStore
+        .listSessions(workspaceId)
+        .find((session) => session.active)?.id
+      return [
+        ...services.workspaceStore.getWorkspaceSnapshot(workspaceId).agents.flatMap((agent) => {
+          const run = services.agentRuntime.getActiveRunByAgentId(workspaceId, agent.id, sessionId)
+          if (!run) return []
+          const launchConfig = services.agentRuntime.peekAgentLaunchConfig(workspaceId, agent.id)
+          return [
+            {
+              agent_id: agent.id,
+              agent_name: agent.name,
+              run_id: run.runId,
+              status: run.status,
+              terminal_input_profile: resolveTerminalInputProfile(launchConfig),
+            },
+          ]
+        }),
+        ...services.shellRuntime.listTerminalRuns(workspaceId),
+      ]
+    },
     startAgent,
     startWorkspaceShell: (workspaceId: string) =>
       services.shellRuntime.start(
@@ -268,7 +291,10 @@ export const createRuntimeStoreLifecycle = ({
     },
     startWorkspaceWatch: async (workspaceId: string) => {
       const workspace = services.workspaceStore.getWorkspaceSnapshot(workspaceId)
-      await services.tasksFileWatcher.start(workspaceId, workspace.summary.path)
+      const sessionId = services.workspaceSessionStore
+        .listSessions(workspaceId)
+        .find((session) => session.active)?.id
+      await services.tasksFileWatcher.start(workspaceId, workspace.summary.path, sessionId)
     },
     writeRunInput: (runId: string, input: Buffer | string) => {
       if (!agentManager) throw new Error('Agent manager is required for PTY stdin writes')

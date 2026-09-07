@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, test } from 'vitest'
 import WebSocket from 'ws'
 
+import { getSessionTasksFilePath } from '../../src/server/tasks-file.js'
 import { startTestServer } from '../helpers/test-server.js'
 import { getUiCookie } from '../helpers/ui-session.js'
 
@@ -159,6 +160,7 @@ describe('tasks watcher websocket', () => {
       })
       expect(workspaceResponse.status).toBe(201)
       const workspace = (await workspaceResponse.json()) as { id: string }
+      const sessionId = server.store.getActiveWorkspaceSessionId(workspace.id)
       await server.store.startWorkspaceWatch(workspace.id)
       const socket = await openSocket(toWsUrl(server.baseUrl, `/ws/tasks/${workspace.id}`), cookie)
       const messages: string[] = []
@@ -167,7 +169,7 @@ describe('tasks watcher websocket', () => {
       const updateTasks = () => {
         writeCount += 1
         writeFileSync(
-          join(workspacePath, '.hive', 'tasks.md'),
+          getSessionTasksFilePath(workspacePath, sessionId),
           `- [x] updated externally ${writeCount}\n`,
           'utf8'
         )

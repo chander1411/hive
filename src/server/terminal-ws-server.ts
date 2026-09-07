@@ -43,7 +43,7 @@ const rejectUpgrade = (
 export const createTerminalWebSocketServer = (
   server: Server,
   store: RuntimeStore,
-  tasksFileService: Pick<TasksFileService, 'readTasks'>
+  tasksFileService: Pick<TasksFileService, 'readSessionTasks'>
 ) => {
   const ioWss = new WebSocketServer({ noServer: true })
   const controlWss = new WebSocketServer({ noServer: true })

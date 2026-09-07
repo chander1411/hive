@@ -19,7 +19,7 @@ export const buildRuntimeRestartPolicy = ({
     insertMessage: (record: MessageLogRecord) => MessageLogHandle
     listMessagesForRecovery: (workspaceId: string, sinceMs: number) => RecoveryMessage[]
   }
-  tasksFileService: Pick<TasksFileService, 'readTasks'>
+  tasksFileService: Pick<TasksFileService, 'readSessionTasks' | 'readTasks'>
   workspaceStore: Pick<WorkspaceStore, 'getWorkspaceSnapshot'>
   getPromptLanguage: () => PromptLanguage
 }) =>
@@ -29,6 +29,9 @@ export const buildRuntimeRestartPolicy = ({
     insertMessage: messageLogStore.insertMessage,
     listAgentRuns: agentRunStore.listAgentRuns,
     listMessagesForRecovery: messageLogStore.listMessagesForRecovery,
-    readTasks: tasksFileService.readTasks,
+    readTasks: (workspacePath, sessionId) =>
+      sessionId
+        ? tasksFileService.readSessionTasks(workspacePath, sessionId)
+        : tasksFileService.readTasks(workspacePath),
     getPromptLanguage,
   })

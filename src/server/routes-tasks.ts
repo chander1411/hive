@@ -20,7 +20,10 @@ export const taskRoutes: RouteDefinition[] = [
       requireUiTokenFromRequest(request, store.validateUiToken)
 
       const workspace = store.getWorkspaceSnapshot(workspaceId)
-      sendJson(response, 200, { content: tasksFileService.readTasks(workspace.summary.path) })
+      const sessionId = store.getActiveWorkspaceSessionId(workspaceId)
+      sendJson(response, 200, {
+        content: tasksFileService.readSessionTasks(workspace.summary.path, sessionId),
+      })
     }
   ),
   route(
@@ -41,6 +44,8 @@ export const taskRoutes: RouteDefinition[] = [
 
       const body = await readJsonBody<{ content: string }>(request)
       const workspace = store.getWorkspaceSnapshot(workspaceId)
+      const sessionId = store.getActiveWorkspaceSessionId(workspaceId)
+      tasksFileService.writeSessionTasks(workspace.summary.path, sessionId, body.content)
       tasksFileService.writeTasks(workspace.summary.path, body.content)
       sendJson(response, 200, { content: body.content })
     }

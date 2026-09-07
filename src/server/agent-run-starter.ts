@@ -13,11 +13,12 @@ import type { LiveRunRegistry } from './live-run-registry.js'
 import { createPostStartInputWriter, isInteractiveAgentCommand } from './post-start-input-writer.js'
 import type { PromptLanguage } from './prompt-language.js'
 import type { RestartPolicy } from './restart-policy.js'
+import { toSessionScopeId } from './session-scope.js'
 
 interface AgentRunStarterInput {
   agentManager: AgentManager | undefined
   registry: LiveRunRegistry
-  onAgentExit: (workspaceId: string, agentId: string) => void
+  onAgentExit: (workspaceId: string, agentId: string, sessionId?: string) => void
   store: AgentRunStarterStorePort
   sessionStore: AgentSessionStorePort
   tokenRegistry: AgentTokenRegistry
@@ -48,36 +49,63 @@ export const createAgentRunStarter =
     workspace: WorkspaceSummary,
     agentId: string,
     config: AgentLaunchConfigInput,
-    hivePort: string
+    hivePort: string,
+    sessionId?: string
   ) => {
     if (!agentManager) throw new Error('Agent manager is required to start agents')
 
     const agent = getAgent?.(workspace.id, agentId)
-    const freshStart = isFreshStart(workspace.id, agentId)
+    const freshnessAgentId = sessionId ? `${sessionId}:${agentId}` : agentId
+    const freshStart = isFreshStart(workspace.id, freshnessAgentId)
+    const sessionWorkspaceId = toSessionScopeId(workspace.id, sessionId)
+    const scopedNativeSessionId = sessionStore.getLastSessionId(sessionWorkspaceId, agentId)
+    const legacyNativeSessionId = freshStart
+      ? undefined
+      : sessionStore.getLastSessionId(workspace.id, agentId)
+    if (sessionId && !scopedNativeSessionId && legacyNativeSessionId) {
+      sessionStore.setLastSessionId(sessionWorkspaceId, agentId, legacyNativeSessionId)
+    }
+    const scopedSessionStore: AgentSessionStorePort = {
+      clearLastSessionId: (_workspaceId, id) => {
+        sessionStore.clearLastSessionId(sessionWorkspaceId, id)
+        if (sessionId) sessionStore.clearLastSessionId(workspace.id, id)
+      },
+      getGeneration: (_workspaceId, id) =>
+        sessionStore.getGeneration?.(sessionWorkspaceId, id) ?? 0,
+      getLastSessionId: (_workspaceId, id) => sessionStore.getLastSessionId(sessionWorkspaceId, id),
+      setLastSessionId: (_workspaceId, id, nativeSessionId) => {
+        sessionStore.setLastSessionId(sessionWorkspaceId, id, nativeSessionId)
+        if (sessionId) sessionStore.setLastSessionId(workspace.id, id, nativeSessionId)
+      },
+    }
     const { sessionCaptureSnapshot, startConfig, startEnv } = buildAgentRunBootstrap(
       workspace,
       agentId,
       config,
-      sessionStore,
+      scopedSessionStore,
       getCommandPreset,
       agent,
-      freshStart
+      freshStart,
+      sessionId
     )
     const handledRunExits = new Set<string>()
     const abortedRunIds = new Set<string>()
     const startedAt = Date.now()
-    const token = tokenRegistry.issue(agentId)
+    const tokenIdentity = sessionId ? `${sessionId}:${agentId}` : agentId
+    const token = tokenRegistry.issue(tokenIdentity)
     const exitContext: AgentRunExitContext = {
       agentId,
       handledRunExits,
       onAgentExit,
       registry,
-      sessionStore,
+      sessionStore: scopedSessionStore,
       startConfig,
       store,
       token,
+      tokenIdentity,
       tokenRegistry,
       workspace,
+      ...(sessionId ? { sessionId } : {}),
     }
     const startInput = {
       agentId,
@@ -92,6 +120,7 @@ export const createAgentRunStarter =
         TERM_PROGRAM: 'hive',
         HIVE_PORT: hivePort,
         HIVE_AGENT_TOKEN: token,
+        ...(sessionId ? { HIVE_SESSION_ID: sessionId } : {}),
       },
       onExit: ({ runId, exitCode }: { runId: string; exitCode: number | null }) => {
         const endedAt = Date.now()
@@ -111,21 +140,23 @@ export const createAgentRunStarter =
         startConfig.args ? { ...startInput, args: startConfig.args } : startInput
       )
     } catch (error) {
-      tokenRegistry.revokeIfMatches(agentId, token)
+      tokenRegistry.revokeIfMatches(tokenIdentity, token)
       throw error
     }
     const liveRun: LiveAgentRun = {
       ...run,
       exitCode: run.status === 'error' ? run.exitCode : null,
+      ...(sessionId ? { sessionId } : {}),
       startedAt,
       status: run.status === 'error' ? 'error' : 'starting',
+      workspaceId: workspace.id,
     }
     try {
       store.insertAgentRun(run.runId, agentId, startedAt, run.pid, liveRun.status, liveRun.exitCode)
     } catch (error) {
       abortedRunIds.add(run.runId)
       registry.clearPendingExitCode(run.runId)
-      tokenRegistry.revokeIfMatches(agentId, token)
+      tokenRegistry.revokeIfMatches(tokenIdentity, token)
       agentManager.stopRun(run.runId)
       throw error
     }
@@ -135,17 +166,23 @@ export const createAgentRunStarter =
     if (run.status === 'error') {
       store.updatePersistedRun(run.runId, 'error', run.exitCode, Date.now())
       if (startConfig.resumedSessionId) {
-        sessionStore.clearLastSessionId(workspace.id, agentId)
+        scopedSessionStore.clearLastSessionId(workspace.id, agentId)
       }
-      tokenRegistry.revokeIfMatches(agentId, token)
+      tokenRegistry.revokeIfMatches(tokenIdentity, token)
       // Ensure §12 three-state: failed spawn must flip AgentSummary to stopped.
-      onAgentExit(workspace.id, agentId)
+      onAgentExit(workspace.id, agentId, sessionId)
       registry.resolveExit(run.runId)
       registry.clearPendingExitCode(run.runId)
       return liveRun
     }
 
-    startAgentRunCapture({ agentId, sessionCaptureSnapshot, sessionStore, startConfig, workspace })
+    startAgentRunCapture({
+      agentId,
+      sessionCaptureSnapshot,
+      sessionStore: scopedSessionStore,
+      startConfig,
+      workspace,
+    })
     const postStartWriter = createPostStartInputWriter(
       agentManager,
       startConfig.interactiveCommand ?? startConfig.command
@@ -157,6 +194,7 @@ export const createAgentRunStarter =
           : restartPolicy.injectPostStartMessage({
               agentId,
               runId: run.runId,
+              sessionId,
               startConfig,
               workspace,
               writeToRun: postStartWriter,
@@ -169,14 +207,20 @@ export const createAgentRunStarter =
         ) {
           postStartWriter(
             run.runId,
-            buildAgentStartupInstructions({ agent, workspace, language: getPromptLanguage() })
+            buildAgentStartupInstructions({
+              agent,
+              workspace,
+              language: getPromptLanguage(),
+              newSession: freshStart,
+              sessionId,
+            })
           )
         }
       } catch {
         // The agent may have exited before post-start guidance could be written.
       }
     })
-    if (freshStart) completeFreshStart(workspace.id, agentId)
+    if (freshStart) completeFreshStart(workspace.id, freshnessAgentId)
 
     if (registry.hasPendingExitCode(run.runId)) {
       const exitCode = registry.getPendingExitCode(run.runId) ?? null

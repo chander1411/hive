@@ -8,13 +8,20 @@ interface TrackedRun {
 }
 
 export interface WorkerOutputTracker {
-  attach: (workspaceId: string, agentId: string, runId: string, initialOutput: string) => void
+  attach: (
+    workspaceId: string,
+    agentId: string,
+    runId: string,
+    initialOutput: string,
+    sessionId?: string
+  ) => void
   closeAll: () => void
-  detach: (workspaceId: string, agentId: string) => void
-  getLastPtyLine: (workspaceId: string, agentId: string) => string | null
+  detach: (workspaceId: string, agentId: string, sessionId?: string) => void
+  getLastPtyLine: (workspaceId: string, agentId: string, sessionId?: string) => string | null
 }
 
-const trackerKey = (workspaceId: string, agentId: string) => `${workspaceId}:${agentId}`
+const trackerKey = (workspaceId: string, agentId: string, sessionId?: string) =>
+  `${workspaceId}:${sessionId ?? 'legacy'}:${agentId}`
 
 /**
  * Maintains a headless terminal mirror per active agent run so the team-list
@@ -31,8 +38,8 @@ export const createWorkerOutputTracker = (outputBus: PtyOutputBus): WorkerOutput
   }
 
   return {
-    attach(workspaceId, agentId, runId, initialOutput) {
-      const key = trackerKey(workspaceId, agentId)
+    attach(workspaceId, agentId, runId, initialOutput, sessionId) {
+      const key = trackerKey(workspaceId, agentId, sessionId)
       const existing = tracked.get(key)
       if (existing) {
         if (existing.runId === runId) return
@@ -49,15 +56,15 @@ export const createWorkerOutputTracker = (outputBus: PtyOutputBus): WorkerOutput
       for (const entry of tracked.values()) disposeEntry(entry)
       tracked.clear()
     },
-    detach(workspaceId, agentId) {
-      const key = trackerKey(workspaceId, agentId)
+    detach(workspaceId, agentId, sessionId) {
+      const key = trackerKey(workspaceId, agentId, sessionId)
       const entry = tracked.get(key)
       if (!entry) return
       disposeEntry(entry)
       tracked.delete(key)
     },
-    getLastPtyLine(workspaceId, agentId) {
-      const entry = tracked.get(trackerKey(workspaceId, agentId))
+    getLastPtyLine(workspaceId, agentId, sessionId) {
+      const entry = tracked.get(trackerKey(workspaceId, agentId, sessionId))
       return entry ? entry.mirror.lastPtyLine() : null
     },
   }

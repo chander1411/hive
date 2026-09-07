@@ -11,7 +11,7 @@ const clearResumedSessionOnFailure = (
   context: Pick<AgentRunExitContext, 'agentId' | 'sessionStore' | 'startConfig' | 'workspace'>,
   exitCode: number | null
 ) => {
-  if (exitCode !== 0 && context.startConfig.resumedSessionId) {
+  if (exitCode !== null && exitCode !== 0 && context.startConfig.resumedSessionId) {
     context.sessionStore.clearLastSessionId(context.workspace.id, context.agentId)
   }
 }
@@ -23,7 +23,7 @@ export const handleAgentRunExit = (
   context.registry.setPendingExitCode(runId, exitCode)
   const liveRun = context.registry.get(runId)
   if (!liveRun) {
-    context.tokenRegistry.revokeIfMatches(context.agentId, context.token)
+    context.tokenRegistry.revokeIfMatches(context.tokenIdentity, context.token)
     return false
   }
   if (context.handledRunExits.has(runId)) {
@@ -34,8 +34,8 @@ export const handleAgentRunExit = (
   completeLiveRun(liveRun, exitCode, endedAt, context.store)
   clearResumedSessionOnFailure(context, exitCode)
   context.handledRunExits.add(runId)
-  context.tokenRegistry.revokeIfMatches(context.agentId, context.token)
-  context.onAgentExit(context.workspace.id, context.agentId)
+  context.tokenRegistry.revokeIfMatches(context.tokenIdentity, context.token)
+  context.onAgentExit(context.workspace.id, context.agentId, context.sessionId)
   context.registry.resolveExit(runId)
   context.registry.clearPendingExitCode(runId)
   return true

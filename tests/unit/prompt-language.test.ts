@@ -27,9 +27,25 @@ const coder = {
 describe('runtime prompt language', () => {
   test('builds English startup instructions without leaking built-in Chinese descriptions', () => {
     const prompt = buildAgentStartupInstructions({ agent: coder, workspace, language: 'en' })
+    const orchestratorPrompt = buildAgentStartupInstructions({
+      agent: orchestrator,
+      workspace,
+      language: 'en',
+      newSession: true,
+    })
+    const restoredPrompt = buildAgentStartupInstructions({
+      agent: orchestrator,
+      workspace,
+      language: 'en',
+    })
 
     expect(prompt).toContain('[Hive system message: startup instructions]')
     expect(prompt).toContain('Your role: You are a Coder.')
+    expect(orchestratorPrompt).toContain('Project memory is reference material')
+    expect(orchestratorPrompt).toContain('Reply only `Ready.`')
+    expect(orchestratorPrompt).toContain("wait for the user's first request")
+    expect(restoredPrompt).not.toContain('New session boundary:')
+    expect(restoredPrompt).not.toContain('Reply only `Ready.`')
     expect(prompt).not.toMatch(/[\u3400-\u9fff]/u)
   })
 
@@ -38,6 +54,7 @@ describe('runtime prompt language', () => {
       agent: orchestrator,
       workspace,
       language: 'es',
+      newSession: true,
     })
     const recovery = buildRecoverySummary({
       agent: orchestrator,
@@ -49,6 +66,9 @@ describe('runtime prompt language', () => {
     })
 
     expect(startup).toContain('[Mensaje del sistema Hive: instrucciones de inicio]')
+    expect(startup).toContain('La memoria del proyecto es material de referencia')
+    expect(startup).toContain('Responde solamente `Listo.`')
+    expect(startup).toContain('espera la primera solicitud del usuario')
     expect(startup).toContain('Tus responsabilidades:')
     expect(recovery).toContain('[Mensaje del sistema Hive:')
     expect(recovery).toContain('## Tareas pendientes')

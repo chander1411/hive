@@ -259,6 +259,7 @@ export interface WorkspaceSessionSummary {
   createdAt: number
   id: string
   name: string
+  running: boolean
   updatedAt: number
   workspaceId: string
 }
@@ -268,6 +269,7 @@ interface WorkspaceSessionPayload {
   created_at: number
   id: string
   name: string
+  running: boolean
   updated_at: number
   workspace_id: string
 }
@@ -277,6 +279,7 @@ const parseWorkspaceSession = (session: WorkspaceSessionPayload): WorkspaceSessi
   createdAt: session.created_at,
   id: session.id,
   name: session.name,
+  running: session.running === true,
   updatedAt: session.updated_at,
   workspaceId: session.workspace_id,
 })

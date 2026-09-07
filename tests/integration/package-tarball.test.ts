@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { existsSync } from 'node:fs'
+import { existsSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 
 import { describe, expect, test } from 'vitest'
@@ -27,6 +27,11 @@ const runNpm = (args: string[]) =>
 describe('npm package tarball', () => {
   test('publish dry-run exposes only runtime files and the hive bin', () => {
     expect(existsSync(join(process.cwd(), 'dist', 'src', 'cli', 'hive.js'))).toBe(true)
+    if (process.platform !== 'win32') {
+      expect(statSync(join(process.cwd(), 'dist', 'src', 'cli', 'hive.js')).mode & 0o111).not.toBe(
+        0
+      )
+    }
     expect(existsSync(join(process.cwd(), 'web', 'dist', 'index.html'))).toBe(true)
 
     const output = runNpm(['pack', '--dry-run', '--json'])

@@ -7,6 +7,7 @@ import type { RecoveryMessage } from './message-log-store.js'
 import { createWorkspaceSessionOperations, type SessionActivationResult } from './new-session.js'
 import type { PtyOutputBus } from './pty-output-bus.js'
 import { createRuntimeStoreLifecycle, createRuntimeStoreServices } from './runtime-store-helpers.js'
+import { fromSessionScopeId, toSessionScopeId } from './session-scope.js'
 import type { SettingsStore } from './settings-store.js'
 import type {
   CancelTaskInput,
@@ -25,7 +26,8 @@ interface RuntimeStore {
   deleteWorkspace: (workspaceId: string) => Promise<void>
   listWorkspaces: () => WorkspaceSummary[]
   listWorkspaceSessions: (workspaceId: string) => WorkspaceSessionSummary[]
-  deleteWorkspaceSession: (workspaceId: string, sessionId: string) => void
+  getActiveWorkspaceSessionId: (workspaceId: string) => string
+  deleteWorkspaceSession: (workspaceId: string, sessionId: string) => Promise<void>
   startNewSession: (
     workspaceId: string,
     input: StartAgentOptions & { name?: string }
@@ -38,7 +40,12 @@ interface RuntimeStore {
   addWorker: (workspaceId: string, input: WorkerInput) => AgentSummary
   deleteWorker: (workspaceId: string, workerId: string) => void
   renameWorker: (workspaceId: string, workerId: string, name: string) => AgentSummary
-  recordUserInput: (workspaceId: string, orchestratorId: string, text: string) => void
+  recordUserInput: (
+    workspaceId: string,
+    orchestratorId: string,
+    text: string,
+    sessionId?: string
+  ) => void
   dispatchTask: (
     workspaceId: string,
     workerId: string,
@@ -55,8 +62,12 @@ interface RuntimeStore {
   statusTask: (workspaceId: string, workerId: string, input?: StatusTaskInput) => ReportTaskResult
   cancelTask: (workspaceId: string, dispatchId: string, input: CancelTaskInput) => ReportTaskResult
   listDispatches: (workspaceId: string, options?: ListDispatchesOptions) => DispatchRecord[]
-  listWorkers: (workspaceId: string) => TeamListItem[]
-  getLastPtyLineForAgent: (workspaceId: string, agentId: string) => string | null
+  listWorkers: (workspaceId: string, sessionId?: string) => TeamListItem[]
+  getLastPtyLineForAgent: (
+    workspaceId: string,
+    agentId: string,
+    sessionId?: string
+  ) => string | null
   getWorkspaceSnapshot: (workspaceId: string) => WorkspaceRecord
   getWorker: (workspaceId: string, workerId: string) => AgentSummary
   getAgent: (workspaceId: string, agentId: string) => AgentSummary
@@ -89,11 +100,15 @@ interface RuntimeStore {
   >
   startWorkspaceWatch: (workspaceId: string) => Promise<void>
   getLiveRun: (runId: string) => LiveAgentRun
-  getActiveRunByAgentId: (workspaceId: string, agentId: string) => LiveAgentRun | undefined
+  getActiveRunByAgentId: (
+    workspaceId: string,
+    agentId: string,
+    sessionId?: string
+  ) => LiveAgentRun | undefined
   registerTasksListener: (listener: (workspaceId: string, content: string) => void) => () => void
   listAgentRuns: (agentId: string) => PersistedAgentRun[]
   listMessagesForRecovery: (workspaceId: string, sinceMs: number) => RecoveryMessage[]
-  peekAgentToken: (agentId: string) => string | undefined
+  peekAgentToken: (agentId: string, sessionId?: string) => string | undefined
   pauseTerminalRun: (runId: string) => void
   resizeAgentRun: (runId: string, cols: number, rows: number) => void
   resumeTerminalRun: (runId: string) => void
@@ -101,7 +116,7 @@ interface RuntimeStore {
   writeRunInput: (runId: string, input: Buffer | string) => void
   getUiToken: () => string
   stopAgentRun: (runId: string) => void
-  validateAgentToken: (agentId: string, token: string | undefined) => boolean
+  validateAgentToken: (agentId: string, token: string | undefined, sessionId?: string) => boolean
   validateUiToken: (token: string | undefined) => boolean
 }
 
@@ -112,6 +127,7 @@ interface RuntimeStoreOptions {
 
 interface StartAgentOptions {
   hivePort: string
+  sessionId?: string | undefined
 }
 
 export type { RuntimeStore }
@@ -129,15 +145,27 @@ export const createRuntimeStore = (options: RuntimeStoreOptions = {}): RuntimeSt
     }
     services.db.transaction(mutation)()
   }
+  const activeSessionId = (workspaceId: string) =>
+    sessionOperations.ensureActiveSession(workspaceId).id
   return {
     close: lifecycle.close,
     createWorkspace: (path, name) => {
       const workspace = services.workspaceStore.createWorkspace(path, name)
+      sessionOperations.ensureActiveSession(workspace.id)
       void lifecycle.startWorkspaceWatch(workspace.id)
       return workspace
     },
     listWorkspaces: () => services.workspaceStore.listWorkspaces(),
-    listWorkspaceSessions: sessionOperations.listSessions,
+    listWorkspaceSessions: (workspaceId) => {
+      const agents = services.workspaceStore.getWorkspaceSnapshot(workspaceId).agents
+      return sessionOperations.listSessions(workspaceId).map((session) => ({
+        ...session,
+        running: agents.some((agent) =>
+          Boolean(services.agentRuntime.getActiveRunByAgentId(workspaceId, agent.id, session.id))
+        ),
+      }))
+    },
+    getActiveWorkspaceSessionId: activeSessionId,
     deleteWorkspaceSession: sessionOperations.deleteSession,
     startNewSession: (workspaceId, input) =>
       sessionOperations.startNewSession(workspaceId, input.hivePort, input.name),
@@ -146,9 +174,8 @@ export const createRuntimeStore = (options: RuntimeStoreOptions = {}): RuntimeSt
     deleteWorkspace: async (workspaceId) => {
       const workspace = services.workspaceStore.getWorkspaceSnapshot(workspaceId)
       lifecycle.deleteWorkspaceShell(workspaceId)
+      await services.agentRuntime.stopWorkspaceAndWait(workspaceId)
       for (const agent of workspace.agents) {
-        const activeRun = services.agentRuntime.getActiveRunByAgentId(workspaceId, agent.id)
-        if (activeRun) services.agentRuntime.stopAgentRun(activeRun.runId)
         services.agentRuntime.deleteAgentLaunchConfig(workspaceId, agent.id)
       }
       await services.tasksFileWatcher.stop(workspaceId)
@@ -165,24 +192,82 @@ export const createRuntimeStore = (options: RuntimeStoreOptions = {}): RuntimeSt
     renameWorker: (workspaceId, workerId, name) =>
       services.workspaceStore.renameWorker(workspaceId, workerId, name),
     deleteWorker: (workspaceId, workerId) => {
-      const activeRun = services.agentRuntime.getActiveRunByAgentId(workspaceId, workerId)
-      if (activeRun) services.agentRuntime.stopAgentRun(activeRun.runId)
+      services.agentRuntime.stopAgentAcrossSessions(workspaceId, workerId)
       services.agentRuntime.deleteAgentLaunchConfig(workspaceId, workerId)
       runDataMutation(() => {
         services.dispatchLedgerStore.deleteWorkerDispatches(workspaceId, workerId)
         services.workspaceStore.deleteWorker(workspaceId, workerId)
       })
     },
-    recordUserInput: services.teamOps.recordUserInput,
-    cancelTask: services.teamOps.cancelTask,
-    dispatchTask: services.teamOps.dispatchTask,
-    dispatchTaskByWorkerName: services.teamOps.dispatchTaskByWorkerName,
-    reportTask: services.teamOps.reportTask,
-    statusTask: services.teamOps.statusTask,
-    listDispatches: services.dispatchLedgerStore.listWorkspaceDispatches,
-    listWorkers: (workspaceId) => services.workspaceStore.listWorkers(workspaceId),
-    getLastPtyLineForAgent: (workspaceId, agentId) =>
-      services.workerOutputTracker?.getLastPtyLine(workspaceId, agentId) ?? null,
+    recordUserInput: (workspaceId, orchestratorId, text, sessionId) =>
+      services.teamOps.recordUserInput(
+        workspaceId,
+        orchestratorId,
+        text,
+        sessionId ?? activeSessionId(workspaceId)
+      ),
+    cancelTask: (workspaceId, dispatchId, input) =>
+      services.teamOps.cancelTask(workspaceId, dispatchId, {
+        ...input,
+        sessionId: input.sessionId ?? activeSessionId(workspaceId),
+      }),
+    dispatchTask: (workspaceId, workerId, text, input = {}) =>
+      services.teamOps.dispatchTask(workspaceId, workerId, text, {
+        ...input,
+        sessionId: input.sessionId ?? activeSessionId(workspaceId),
+      }),
+    dispatchTaskByWorkerName: (workspaceId, workerName, text, input = {}) =>
+      services.teamOps.dispatchTaskByWorkerName(workspaceId, workerName, text, {
+        ...input,
+        sessionId: input.sessionId ?? activeSessionId(workspaceId),
+      }),
+    reportTask: (workspaceId, workerId, input = {}) =>
+      services.teamOps.reportTask(workspaceId, workerId, {
+        ...input,
+        sessionId: input.sessionId ?? activeSessionId(workspaceId),
+      }),
+    statusTask: (workspaceId, workerId, input = {}) =>
+      services.teamOps.statusTask(workspaceId, workerId, {
+        ...input,
+        sessionId: input.sessionId ?? activeSessionId(workspaceId),
+      }),
+    listDispatches: (workspaceId, options) =>
+      services.dispatchLedgerStore
+        .listWorkspaceDispatches(
+          toSessionScopeId(workspaceId, activeSessionId(workspaceId)),
+          options
+        )
+        .map((dispatch) => ({ ...dispatch, workspaceId })),
+    listWorkers: (workspaceId, requestedSessionId) => {
+      const sessionId = requestedSessionId ?? activeSessionId(workspaceId)
+      const scopeId = toSessionScopeId(workspaceId, sessionId)
+      const openDispatches = services.dispatchLedgerStore
+        .listWorkspaceDispatches(scopeId, { limit: 10_000 })
+        .filter((dispatch) => dispatch.status === 'queued' || dispatch.status === 'submitted')
+      return services.workspaceStore.listWorkers(workspaceId).map((worker) => {
+        const pendingTaskCount = openDispatches.filter(
+          (dispatch) => dispatch.toAgentId === worker.id
+        ).length
+        const run = services.agentRuntime.getActiveRunByAgentId(workspaceId, worker.id, sessionId)
+        return {
+          ...worker,
+          pendingTaskCount,
+          status: run
+            ? pendingTaskCount > 0
+              ? 'working'
+              : 'idle'
+            : pendingTaskCount > 0 && worker.status !== 'stopped'
+              ? 'working'
+              : 'stopped',
+        }
+      })
+    },
+    getLastPtyLineForAgent: (workspaceId, agentId, requestedSessionId) =>
+      services.workerOutputTracker?.getLastPtyLine(
+        workspaceId,
+        agentId,
+        requestedSessionId ?? activeSessionId(workspaceId)
+      ) ?? null,
     getWorkspaceSnapshot: (workspaceId) =>
       services.workspaceStore.getWorkspaceSnapshot(workspaceId),
     getWorker: (workspaceId, workerId) => services.workspaceStore.getWorker(workspaceId, workerId),
@@ -192,18 +277,28 @@ export const createRuntimeStore = (options: RuntimeStoreOptions = {}): RuntimeSt
     closeWorkspaceShell: lifecycle.closeWorkspaceShell,
     configureAgentLaunch: lifecycle.configureAgentLaunch,
     peekAgentLaunchConfig: lifecycle.peekAgentLaunchConfig,
-    startAgent: lifecycle.startAgent,
+    startAgent: (workspaceId, agentId, input) =>
+      lifecycle.startAgent(workspaceId, agentId, {
+        ...input,
+        sessionId: input.sessionId ?? activeSessionId(workspaceId),
+      }),
     autostartConfiguredAgents: lifecycle.autostartConfiguredAgents,
     startWorkspaceWatch: lifecycle.startWorkspaceWatch,
     startWorkspaceShell: lifecycle.startWorkspaceShell,
     getLiveRun: lifecycle.getLiveRun,
-    getActiveRunByAgentId: (workspaceId, agentId) =>
-      services.agentRuntime.getActiveRunByAgentId(workspaceId, agentId),
+    getActiveRunByAgentId: (workspaceId, agentId, sessionId) =>
+      services.agentRuntime.getActiveRunByAgentId(workspaceId, agentId, sessionId),
     registerTasksListener: lifecycle.registerTasksListener,
     listAgentRuns: (agentId) => services.agentRuntime.listAgentRuns(agentId),
-    listMessagesForRecovery: (workspaceId, sinceMs) =>
-      services.messageLogStore.listMessagesForRecovery(workspaceId, sinceMs),
-    peekAgentToken: (agentId) => services.agentRuntime.peekAgentToken(agentId),
+    listMessagesForRecovery: (workspaceId, sinceMs) => {
+      const parsed = fromSessionScopeId(workspaceId)
+      const scopeId = parsed.sessionId
+        ? workspaceId
+        : toSessionScopeId(workspaceId, activeSessionId(workspaceId))
+      return services.messageLogStore.listMessagesForRecovery(scopeId, sinceMs)
+    },
+    peekAgentToken: (agentId, sessionId) =>
+      services.agentRuntime.peekAgentToken(agentId, sessionId),
     pauseTerminalRun: lifecycle.pauseTerminalRun,
     resizeAgentRun: lifecycle.resizeTerminalRun,
     resumeTerminalRun: lifecycle.resumeTerminalRun,
@@ -211,8 +306,8 @@ export const createRuntimeStore = (options: RuntimeStoreOptions = {}): RuntimeSt
     writeRunInput: lifecycle.writeRunInput,
     getUiToken: () => services.uiAuth.getToken(),
     stopAgentRun: lifecycle.stopTerminalRun,
-    validateAgentToken: (agentId, token) =>
-      services.agentRuntime.validateAgentToken(agentId, token),
+    validateAgentToken: (agentId, token, sessionId) =>
+      services.agentRuntime.validateAgentToken(agentId, token, sessionId),
     validateUiToken: (token) => services.uiAuth.validate(token),
   }
 }

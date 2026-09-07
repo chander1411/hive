@@ -17,8 +17,9 @@ interface AuthenticateInput {
   fromAgentId: string | undefined
   getAgent: (workspaceId: string, agentId: string) => AgentSummary
   token: string | undefined
-  validateToken: (agentId: string, token: string | undefined) => boolean
+  validateToken: (agentId: string, token: string | undefined, sessionId?: string) => boolean
   workspaceId: string
+  sessionId?: string | undefined
 }
 
 export const authenticateCliAgent = ({
@@ -27,11 +28,12 @@ export const authenticateCliAgent = ({
   token,
   validateToken,
   workspaceId,
+  sessionId,
 }: AuthenticateInput): AgentSummary => {
   if (!fromAgentId) {
     throw new UnauthorizedError('Missing agent identity')
   }
-  if (!validateToken(fromAgentId, token)) {
+  if (!validateToken(fromAgentId, token, sessionId)) {
     throw new UnauthorizedError('Invalid or missing agent token')
   }
   let agent: AgentSummary

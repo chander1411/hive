@@ -27,6 +27,7 @@ const copyDirRequired = (source, target) => {
 mkdirSync(distBin, { recursive: true })
 copyRequired('bin/team', 'dist/bin/team', 0o755)
 copyRequired('bin/team.cmd', 'dist/bin/team.cmd')
+chmodSync(join(root, 'dist', 'src', 'cli', 'hive.js'), 0o755)
 
 mkdirSync(distVendor, { recursive: true })
 copyDirRequired('vendor/marketplace', 'dist/vendor/marketplace')

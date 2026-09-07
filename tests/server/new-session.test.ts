@@ -1,4 +1,4 @@
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -6,6 +6,8 @@ import Database from 'better-sqlite3'
 import { afterEach, describe, expect, test } from 'vitest'
 
 import { createRuntimeStore } from '../../src/server/runtime-store.js'
+import { toSessionScopeId } from '../../src/server/session-scope.js'
+import { getSessionTasksRelativePath } from '../../src/server/tasks-file.js'
 import { getOrchestratorId } from '../../src/server/workspace-store-support.js'
 import { startTestServer } from '../helpers/test-server.js'
 import { getUiCookie } from '../helpers/ui-session.js'
@@ -32,18 +34,19 @@ const waitForLines = async (path: string, count: number) => {
   throw new Error(`Timed out waiting for ${count} launch records`)
 }
 
-const waitForText = async (path: string, expected: string) => {
-  const deadline = Date.now() + 5000
+const waitFor = async (assertion: () => void, timeoutMs = 5000) => {
+  const deadline = Date.now() + timeoutMs
+  let lastError: unknown
   while (Date.now() < deadline) {
     try {
-      const content = readFileSync(path, 'utf8')
-      if (content.includes(expected)) return content
+      assertion()
+      return
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+      lastError = error
+      await new Promise<void>((resolve) => setTimeout(resolve, 25))
     }
-    await new Promise<void>((resolve) => setTimeout(resolve, 25))
   }
-  throw new Error(`Timed out waiting for ${expected}`)
+  throw lastError
 }
 
 describe('POST /api/workspaces/:workspaceId/new-session', () => {
@@ -149,11 +152,28 @@ describe('POST /api/workspaces/:workspaceId/new-session', () => {
     expect(initialSessions[0]).toMatchObject({ active: true, name: 'Session 1' })
     const firstSessionId = initialSessions[0]?.id
     expect(firstSessionId).toBeDefined()
-    await server.store.startAgent(workspace.id, orchestratorId, { hivePort: '4010' })
-    await server.store.startAgent(workspace.id, worker.id, { hivePort: '4010' })
+    writeFileSync(
+      join(workspacePath, getSessionTasksRelativePath(firstSessionId as string)),
+      '- [ ] old task\n'
+    )
+    const initialOrchestratorRun = await server.store.startAgent(workspace.id, orchestratorId, {
+      hivePort: '4010',
+    })
+    const initialWorkerRun = await server.store.startAgent(workspace.id, worker.id, {
+      hivePort: '4010',
+    })
     const resumedLaunches = await waitForLines(launchLog, 2)
     expect(resumedLaunches).toContainEqual(['--resume', 'claude-old'])
     expect(resumedLaunches).toContainEqual(['--session', 'opencode-old'])
+    const migratedSessionsDb = new Database(join(dataDir, 'runtime.sqlite'))
+    expect(
+      migratedSessionsDb
+        .prepare(
+          'SELECT last_session_id FROM agent_sessions WHERE workspace_id = ? AND agent_id = ?'
+        )
+        .get(toSessionScopeId(workspace.id, firstSessionId), orchestratorId)
+    ).toEqual({ last_session_id: 'claude-old' })
+    migratedSessionsDb.close()
     await server.store.dispatchTask(workspace.id, worker.id, 'old delegated work')
 
     const response = await fetch(`${server.baseUrl}/api/workspaces/${workspace.id}/new-session`, {
@@ -173,9 +193,13 @@ describe('POST /api/workspaces/:workspaceId/new-session', () => {
     const launches = await waitForLines(launchLog, 3)
     expect(launches[2]).not.toContain('--resume')
     expect(launches[2]).not.toContain('claude-old')
-    const bootstrap = await waitForText(bootstrapLog, 'team send <worker-name>')
-    expect(bootstrap).toContain('[Hive 系统消息：启动说明]')
-    expect(bootstrap).not.toContain('接力上下文')
+    await waitFor(() => {
+      const bootstrap = readFileSync(bootstrapLog, 'utf8')
+      expect(bootstrap).toContain('新会话边界')
+      expect(bootstrap).toContain('只回复“已就绪。”')
+    })
+    expect(server.store.getLiveRun(initialOrchestratorRun.runId).status).not.toBe('exited')
+    expect(server.store.getLiveRun(initialWorkerRun.runId).status).not.toBe('exited')
     expect(server.store.listWorkers(workspace.id)).toEqual([
       {
         id: worker.id,
@@ -198,31 +222,24 @@ describe('POST /api/workspaces/:workspaceId/new-session', () => {
     expect(readFileSync(teamMemoryPath, 'utf8')).toBe('Keep pnpm conventions\n')
 
     const verificationDb = new Database(join(dataDir, 'runtime.sqlite'))
-    expect(
-      verificationDb
-        .prepare('SELECT agent_id FROM agent_sessions WHERE workspace_id = ?')
-        .all(workspace.id)
-    ).toEqual([])
-    expect(
-      verificationDb
-        .prepare('SELECT id, last_session_id FROM workers WHERE workspace_id = ?')
-        .all(workspace.id)
-    ).toEqual([{ id: worker.id, last_session_id: null }])
     verificationDb.close()
 
     await server.store.startAgent(workspace.id, worker.id, { hivePort: '4010' })
     const freshLaunches = await waitForLines(launchLog, 4)
     expect(freshLaunches[3]).not.toContain('--session')
     expect(freshLaunches[3]).not.toContain('opencode-old')
-    writeFileSync(join(workspacePath, '.hive', 'tasks.md'), '- [ ] session 2 task\n')
+    writeFileSync(
+      join(workspacePath, getSessionTasksRelativePath(body.session.id)),
+      '- [ ] session 2 task\n'
+    )
 
     const switchResponse = await fetch(
       `${server.baseUrl}/api/workspaces/${workspace.id}/sessions/${firstSessionId}/activate`,
       { headers: { cookie }, method: 'POST' }
     )
     expect(switchResponse.status).toBe(200)
-    const switchedLaunches = await waitForLines(launchLog, 5)
-    expect(switchedLaunches[4]).toEqual(['--resume', 'claude-old'])
+    const switched = (await switchResponse.json()) as { run_id: string }
+    expect(switched.run_id).toBe(initialOrchestratorRun.runId)
     expect(readFileSync(join(workspacePath, '.hive', 'tasks.md'), 'utf8')).toBe('- [ ] old task\n')
     expect(server.store.listDispatches(workspace.id)).toEqual([
       expect.objectContaining({ status: 'queued', text: 'old delegated work' }),
@@ -230,20 +247,21 @@ describe('POST /api/workspaces/:workspaceId/new-session', () => {
     expect(server.store.listWorkers(workspace.id)[0]).toMatchObject({
       id: worker.id,
       pendingTaskCount: 1,
-      status: 'stopped',
+      status: 'working',
     })
 
-    await server.store.startAgent(workspace.id, worker.id, { hivePort: '4010' })
-    const restoredWorkerLaunches = await waitForLines(launchLog, 6)
-    expect(restoredWorkerLaunches[5]).toEqual(['--session', 'opencode-old'])
+    const restoredWorkerRun = await server.store.startAgent(workspace.id, worker.id, {
+      hivePort: '4010',
+    })
+    expect(restoredWorkerRun.runId).toBe(initialWorkerRun.runId)
 
     const switchBackResponse = await fetch(
       `${server.baseUrl}/api/workspaces/${workspace.id}/sessions/${body.session.id}/activate`,
       { headers: { cookie }, method: 'POST' }
     )
     expect(switchBackResponse.status).toBe(200)
-    const switchedBackLaunches = await waitForLines(launchLog, 7)
-    expect(switchedBackLaunches[6]).not.toContain('--resume')
+    const switchedBack = (await switchBackResponse.json()) as { run_id: string }
+    expect(switchedBack.run_id).toBe(body.run_id)
     expect(readFileSync(join(workspacePath, '.hive', 'tasks.md'), 'utf8')).toBe(
       '- [ ] session 2 task\n'
     )
@@ -259,9 +277,11 @@ describe('POST /api/workspaces/:workspaceId/new-session', () => {
       active: boolean
       id: string
       name: string
+      running: boolean
     }>
     expect(sessions).toHaveLength(2)
     expect(sessions.find((session) => session.id === body.session.id)?.active).toBe(true)
+    expect(sessions.every((session) => session.running)).toBe(true)
 
     const deleteArchivedResponse = await fetch(
       `${server.baseUrl}/api/workspaces/${workspace.id}/sessions/${firstSessionId}`,
@@ -269,6 +289,9 @@ describe('POST /api/workspaces/:workspaceId/new-session', () => {
     )
     expect(deleteArchivedResponse.status).toBe(204)
     expect(server.store.listWorkspaceSessions(workspace.id)).toHaveLength(1)
+    expect(
+      existsSync(join(workspacePath, getSessionTasksRelativePath(firstSessionId as string)))
+    ).toBe(false)
 
     const deleteActiveResponse = await fetch(
       `${server.baseUrl}/api/workspaces/${workspace.id}/sessions/${body.session.id}`,

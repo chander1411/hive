@@ -298,10 +298,10 @@ export const createDispatchLedgerStore = (db: Database) => {
   }
 
   const deleteWorkerDispatches = (workspaceId: string, workerId: string) => {
-    db.prepare('DELETE FROM dispatches WHERE workspace_id = ? AND to_agent_id = ?').run(
-      workspaceId,
-      workerId
-    )
+    db.prepare(
+      `DELETE FROM dispatches
+       WHERE (workspace_id = ? OR workspace_id LIKE ?) AND to_agent_id = ?`
+    ).run(workspaceId, `${workspaceId}::hive-session::%`, workerId)
   }
 
   return {

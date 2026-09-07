@@ -40,10 +40,11 @@ export const resolveCommandPresetId = (
 export const enrichTeamList = (
   workspaceId: string,
   store: TeamListEnrichmentStore,
-  workers: TeamListItem[]
+  workers: TeamListItem[],
+  sessionId?: string
 ): TeamListItem[] =>
   workers.map((worker) => {
-    const line = store.getLastPtyLineForAgent(workspaceId, worker.id)
+    const line = store.getLastPtyLineForAgent(workspaceId, worker.id, sessionId)
     const presetId = resolveCommandPresetId(store, workspaceId, worker.id)
     const next: TeamListItem = { ...worker }
     if (line !== null) next.lastPtyLine = line

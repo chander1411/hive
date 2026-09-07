@@ -3,13 +3,18 @@ import { readFile } from 'node:fs/promises'
 
 import chokidar, { type FSWatcher } from 'chokidar'
 
-import { ensureProtocolFile, ensureTasksFile, getTasksFilePath } from './tasks-file.js'
+import {
+  ensureProtocolFile,
+  ensureTasksFile,
+  getSessionTasksFilePath,
+  getTasksFilePath,
+} from './tasks-file.js'
 
 const DEBOUNCE_MS = 100
 
 export interface TasksFileWatcher {
   close: () => Promise<void>
-  start: (workspaceId: string, workspacePath: string) => Promise<void>
+  start: (workspaceId: string, workspacePath: string, sessionId?: string) => Promise<void>
   stop: (workspaceId: string) => Promise<void>
 }
 
@@ -28,8 +33,14 @@ export const createTasksFileWatcher = ({
     timers.delete(workspaceId)
   }
 
-  const emitCurrentContent = async (workspaceId: string, workspacePath: string) => {
-    const tasksPath = getTasksFilePath(workspacePath)
+  const emitCurrentContent = async (
+    workspaceId: string,
+    workspacePath: string,
+    sessionId?: string
+  ) => {
+    const tasksPath = sessionId
+      ? getSessionTasksFilePath(workspacePath, sessionId)
+      : getTasksFilePath(workspacePath)
     try {
       const content = existsSync(tasksPath) ? await readFile(tasksPath, 'utf8') : ''
       onTasksUpdated(workspaceId, content)
@@ -50,20 +61,25 @@ export const createTasksFileWatcher = ({
     close: async () => {
       await Promise.all(Array.from(watchers.keys(), (workspaceId) => stop(workspaceId)))
     },
-    start: async (workspaceId, workspacePath) => {
+    start: async (workspaceId, workspacePath, sessionId) => {
       await stop(workspaceId)
       ensureTasksFile(workspacePath)
       ensureProtocolFile(workspacePath)
-      const watcher = chokidar.watch(getTasksFilePath(workspacePath), {
-        ignoreInitial: true,
-      })
+      const watcher = chokidar.watch(
+        sessionId
+          ? getSessionTasksFilePath(workspacePath, sessionId)
+          : getTasksFilePath(workspacePath),
+        {
+          ignoreInitial: true,
+        }
+      )
       const scheduleEmit = () => {
         clearTimer(workspaceId)
         timers.set(
           workspaceId,
           setTimeout(() => {
             timers.delete(workspaceId)
-            void emitCurrentContent(workspaceId, workspacePath)
+            void emitCurrentContent(workspaceId, workspacePath, sessionId)
           }, DEBOUNCE_MS)
         )
       }

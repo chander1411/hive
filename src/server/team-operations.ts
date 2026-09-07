@@ -8,6 +8,7 @@ import {
   createStatusMessage,
   createUserInputMessage,
 } from './runtime-message-builders.js'
+import { toSessionScopeId } from './session-scope.js'
 import type { WorkspaceStore } from './workspace-store.js'
 
 export interface TeamOperationsInput {
@@ -46,6 +47,7 @@ export interface TeamOperationsInput {
 export interface DispatchTaskInput {
   fromAgentId?: string
   hivePort?: string
+  sessionId?: string | undefined
 }
 
 export interface ReportTaskInput {
@@ -54,17 +56,20 @@ export interface ReportTaskInput {
   requireActiveRun?: boolean
   status?: string
   text?: string
+  sessionId?: string | undefined
 }
 
 export interface StatusTaskInput {
   artifacts?: string[]
   requireActiveRun?: boolean
   text?: string
+  sessionId?: string | undefined
 }
 
 export interface CancelTaskInput {
   fromAgentId: string
   reason: string
+  sessionId?: string | undefined
 }
 
 export interface ReportTaskResult {
@@ -89,8 +94,13 @@ export const createTeamOperations = ({
   markDispatchSubmitted,
   workspaceStore,
 }: TeamOperationsInput) => {
-  const ensureWorkerRun = async (workspaceId: string, workerId: string, hivePort: string) => {
-    if (agentRuntime.getActiveRunByAgentId(workspaceId, workerId)) {
+  const ensureWorkerRun = async (
+    workspaceId: string,
+    workerId: string,
+    hivePort: string,
+    sessionId?: string
+  ) => {
+    if (agentRuntime.getActiveRunByAgentId(workspaceId, workerId, sessionId)) {
       return
     }
 
@@ -104,7 +114,7 @@ export const createTeamOperations = ({
       const run = await agentRuntime.startAgent(
         workspaceStore.getWorkspaceSnapshot(workspaceId).summary,
         workerId,
-        { hivePort }
+        { hivePort, sessionId }
       )
       if (run.status === 'error') {
         workspaceStore.markAgentStopped(workspaceId, workerId)
@@ -122,7 +132,11 @@ export const createTeamOperations = ({
     text: string,
     input: DispatchTaskInput = {}
   ) => {
-    const message = createSendMessage(workspaceId, workerId, text, input.fromAgentId)
+    const scopeId = toSessionScopeId(workspaceId, input.sessionId)
+    const message = {
+      ...createSendMessage(workspaceId, workerId, text, input.fromAgentId),
+      workspaceId: scopeId,
+    }
     const messageHandle = insertMessage(message)
     let dispatch: DispatchRecord | undefined
 
@@ -135,14 +149,14 @@ export const createTeamOperations = ({
       } = {
         text,
         toAgentId: workerId,
-        workspaceId,
+        workspaceId: scopeId,
       }
       if (input.fromAgentId) dispatchInput.fromAgentId = input.fromAgentId
       dispatch = createDispatch(dispatchInput)
 
       if (input.fromAgentId) {
         const sender = workspaceStore.getAgent(workspaceId, input.fromAgentId)
-        await ensureWorkerRun(workspaceId, workerId, input.hivePort ?? '')
+        await ensureWorkerRun(workspaceId, workerId, input.hivePort ?? '', input.sessionId)
         const worker = workspaceStore.getWorker(workspaceId, workerId)
         markDispatchSubmitted(dispatch.id)
         agentRuntime.writeSendPrompt(
@@ -151,7 +165,8 @@ export const createTeamOperations = ({
           dispatch.id,
           sender.name,
           worker.description,
-          text
+          text,
+          input.sessionId
         )
       }
 
@@ -166,15 +181,16 @@ export const createTeamOperations = ({
 
   return {
     cancelTask(workspaceId: string, dispatchId: string, input: CancelTaskInput) {
+      const scopeId = toSessionScopeId(workspaceId, input.sessionId)
       workspaceStore.getAgent(workspaceId, input.fromAgentId)
-      const openDispatch = findOpenDispatchById(workspaceId, dispatchId)
+      const openDispatch = findOpenDispatchById(scopeId, dispatchId)
       if (!openDispatch) {
         throw new ConflictError(`No open dispatch: ${dispatchId}`)
       }
       const dispatch = markDispatchCancelled({
         dispatchId,
         reason: input.reason,
-        workspaceId,
+        workspaceId: scopeId,
       })
       if (!dispatch) {
         throw new ConflictError(`No open dispatch: ${dispatchId}`)
@@ -183,7 +199,9 @@ export const createTeamOperations = ({
       let forwardError: string | null = null
       let forwarded = false
       try {
-        agentRuntime.writeCancelPrompt(workspaceId, dispatch.toAgentId, dispatch.id, input.reason)
+        agentRuntime.writeCancelPrompt(workspaceId, dispatch.toAgentId, dispatch.id, input.reason, {
+          sessionId: input.sessionId,
+        })
         forwarded = true
       } catch (error) {
         forwardError = reportForwardErrorMessage(error)
@@ -201,18 +219,23 @@ export const createTeamOperations = ({
       const worker = workspaceStore.getWorkerByName(workspaceId, workerName)
       return dispatchTask(workspaceId, worker.id, text, input)
     },
-    recordUserInput(workspaceId: string, orchestratorId: string, text: string) {
+    recordUserInput(workspaceId: string, orchestratorId: string, text: string, sessionId?: string) {
       workspaceStore.getAgent(workspaceId, orchestratorId)
-      agentRuntime.writeUserInputPrompt(workspaceId, text)
-      insertMessage(createUserInputMessage(workspaceId, orchestratorId, text))
+      agentRuntime.writeUserInputPrompt(workspaceId, text, sessionId)
+      insertMessage({
+        ...createUserInputMessage(workspaceId, orchestratorId, text),
+        workspaceId: toSessionScopeId(workspaceId, sessionId),
+      })
     },
     statusTask(workspaceId: string, workerId: string, input: StatusTaskInput = {}) {
+      const scopeId = toSessionScopeId(workspaceId, input.sessionId)
       const text = input.text ?? ''
       const artifacts = input.artifacts ?? []
       const worker = workspaceStore.getWorker(workspaceId, workerId)
-      const messageHandle = insertMessage(
-        createStatusMessage(workspaceId, workerId, text, artifacts)
-      )
+      const messageHandle = insertMessage({
+        ...createStatusMessage(workspaceId, workerId, text, artifacts),
+        workspaceId: scopeId,
+      })
       try {
         let forwardError: string | null = null
         let forwarded = false
@@ -220,6 +243,7 @@ export const createTeamOperations = ({
           try {
             agentRuntime.writeStatusPrompt(workspaceId, worker.name, workerId, text, artifacts, {
               requireActiveRun: input.requireActiveRun,
+              sessionId: input.sessionId,
             })
             forwarded = true
           } catch (error) {
@@ -234,33 +258,39 @@ export const createTeamOperations = ({
       }
     },
     reportTask(workspaceId: string, workerId: string, input: ReportTaskInput = {}) {
+      const scopeId = toSessionScopeId(workspaceId, input.sessionId)
       const text = input.text ?? ''
       const status = input.status
       const artifacts = input.artifacts ?? []
       const worker = workspaceStore.getWorker(workspaceId, workerId)
       if (
         input.requireActiveRun === true &&
-        !agentRuntime.getActiveRunByAgentId(workspaceId, `${workspaceId}:orchestrator`)
+        !agentRuntime.getActiveRunByAgentId(
+          workspaceId,
+          `${workspaceId}:orchestrator`,
+          input.sessionId
+        )
       ) {
         throw new PtyInactiveError(`No active run for agent: ${workspaceId}:orchestrator`)
       }
-      const openDispatch = findOpenDispatch(workspaceId, workerId, input.dispatchId)
+      const openDispatch = findOpenDispatch(scopeId, workerId, input.dispatchId)
       if (!openDispatch && input.dispatchId) {
         throw new ConflictError(`No open dispatch for worker: ${worker.name}`)
       }
       if (!openDispatch) {
         throw new ConflictError(`No open dispatch for worker: ${worker.name}`)
       }
-      const messageHandle = insertMessage(
-        createReportMessage(workspaceId, workerId, text, status, artifacts)
-      )
+      const messageHandle = insertMessage({
+        ...createReportMessage(workspaceId, workerId, text, status, artifacts),
+        workspaceId: scopeId,
+      })
       try {
         const dispatch = markDispatchReportedByWorker({
           artifacts,
           ...(input.dispatchId ? { dispatchId: input.dispatchId } : {}),
           reportText: text,
           toAgentId: workerId,
-          workspaceId,
+          workspaceId: scopeId,
         })
         if (!dispatch) {
           throw new ConflictError(`No open dispatch for worker: ${worker.name}`)
@@ -272,6 +302,7 @@ export const createTeamOperations = ({
           try {
             agentRuntime.writeReportPrompt(workspaceId, worker.name, workerId, text, artifacts, {
               requireActiveRun: input.requireActiveRun,
+              sessionId: input.sessionId,
             })
             forwarded = true
           } catch (error) {

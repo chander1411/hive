@@ -15,6 +15,7 @@ interface HiveEnv {
   HIVE_PROJECT_ID: string
   HIVE_AGENT_ID: string
   HIVE_AGENT_TOKEN: string
+  HIVE_SESSION_ID?: string
 }
 
 const TEAM_USAGE = [
@@ -46,7 +47,10 @@ const getHiveEnv = (): HiveEnv => {
     throw new Error('Missing required Hive environment variables')
   }
 
-  return values as HiveEnv
+  return {
+    ...(values as HiveEnv),
+    ...(process.env.HIVE_SESSION_ID ? { HIVE_SESSION_ID: process.env.HIVE_SESSION_ID } : {}),
+  }
 }
 
 const getBaseUrl = (env: HiveEnv) => `http://127.0.0.1:${env.HIVE_PORT}`
@@ -293,6 +297,7 @@ export const runTeamCommand = async (argv: string[]) => {
       headers: {
         'x-hive-agent-id': env.HIVE_AGENT_ID,
         'x-hive-agent-token': env.HIVE_AGENT_TOKEN,
+        ...(env.HIVE_SESSION_ID ? { 'x-hive-session-id': env.HIVE_SESSION_ID } : {}),
       },
     })
 
@@ -318,6 +323,7 @@ export const runTeamCommand = async (argv: string[]) => {
       project_id: env.HIVE_PROJECT_ID,
       from_agent_id: env.HIVE_AGENT_ID,
       token: env.HIVE_AGENT_TOKEN,
+      session_id: env.HIVE_SESSION_ID,
       to: workerName,
       text: task,
     })
@@ -337,6 +343,7 @@ export const runTeamCommand = async (argv: string[]) => {
       project_id: env.HIVE_PROJECT_ID,
       from_agent_id: env.HIVE_AGENT_ID,
       token: env.HIVE_AGENT_TOKEN,
+      session_id: env.HIVE_SESSION_ID,
       worker_name: workerName,
     })
     console.log(JSON.stringify(await response.json()))
@@ -352,6 +359,7 @@ export const runTeamCommand = async (argv: string[]) => {
       project_id: env.HIVE_PROJECT_ID,
       from_agent_id: env.HIVE_AGENT_ID,
       token: env.HIVE_AGENT_TOKEN,
+      session_id: env.HIVE_SESSION_ID,
       reason: cancel.reason,
     })
     return
@@ -367,6 +375,7 @@ export const runTeamCommand = async (argv: string[]) => {
       project_id: env.HIVE_PROJECT_ID,
       from_agent_id: env.HIVE_AGENT_ID,
       token: env.HIVE_AGENT_TOKEN,
+      session_id: env.HIVE_SESSION_ID,
       result: body,
       artifacts: report.artifacts,
     })
@@ -390,6 +399,7 @@ export const runTeamCommand = async (argv: string[]) => {
       project_id: env.HIVE_PROJECT_ID,
       from_agent_id: env.HIVE_AGENT_ID,
       token: env.HIVE_AGENT_TOKEN,
+      session_id: env.HIVE_SESSION_ID,
       result: body,
       artifacts: report.artifacts,
     })

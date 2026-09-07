@@ -7,7 +7,7 @@ import { join } from 'node:path'
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import WebSocket from 'ws'
-
+import { getSessionTasksFilePath } from '../../src/server/tasks-file.js'
 import { AppProviders } from '../../web/src/AppProviders.js'
 import { useTasksFile } from '../../web/src/tasks/useTasksFile.js'
 import { WorkspaceTaskDrawer } from '../../web/src/tasks/WorkspaceTaskDrawer.js'
@@ -19,6 +19,7 @@ let workspacePath = ''
 let workspaceId = ''
 let baseUrl = ''
 let uiCookie = ''
+let sessionTasksPath = ''
 const tempDirs: string[] = []
 
 const TaskDrawerHarness = () => {
@@ -91,6 +92,14 @@ beforeEach(async () => {
   })
   const workspace = (await workspaceResponse.json()) as { id: string }
   workspaceId = workspace.id
+  const sessionsResponse = await nativeFetch(
+    `${server.baseUrl}/api/workspaces/${workspace.id}/sessions`,
+    { headers: { cookie: uiCookie } }
+  )
+  const sessions = (await sessionsResponse.json()) as Array<{ active: boolean; id: string }>
+  const activeSession = sessions.find((session) => session.active)
+  if (!activeSession) throw new Error('Expected an active workspace session')
+  sessionTasksPath = getSessionTasksFilePath(workspacePath, activeSession.id)
   await nativeFetch(`${server.baseUrl}/api/workspaces/${workspace.id}/tasks`, {
     method: 'PUT',
     headers: { 'content-type': 'application/json', cookie: uiCookie },
@@ -212,7 +221,7 @@ describe('tasks flow driven from the Task Graph drawer', () => {
       target: { value: '- [ ] local draft\n' },
     })
     mkdirSync(join(workspacePath, '.hive'), { recursive: true })
-    writeFileSync(join(workspacePath, '.hive', 'tasks.md'), '- [x] external change\n', 'utf8')
+    writeFileSync(sessionTasksPath, '- [x] external change\n', 'utf8')
 
     await waitFor(() => {
       expect(screen.getByText('File changed externally')).toBeInTheDocument()
@@ -234,7 +243,7 @@ describe('tasks flow driven from the Task Graph drawer', () => {
     await enterRawEditor('- [ ] implement login\n')
 
     mkdirSync(join(workspacePath, '.hive'), { recursive: true })
-    writeFileSync(join(workspacePath, '.hive', 'tasks.md'), '- [x] auto sync\n', 'utf8')
+    writeFileSync(sessionTasksPath, '- [x] auto sync\n', 'utf8')
 
     await waitFor(() => {
       expect(screen.getByLabelText('Tasks Markdown')).toHaveValue('- [x] auto sync\n')

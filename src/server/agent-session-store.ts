@@ -1,4 +1,5 @@
 import type { Database } from 'better-sqlite3'
+import { fromSessionScopeId } from './session-scope.js'
 
 interface AgentSessionRow {
   agent_id: string
@@ -41,15 +42,16 @@ export const createAgentSessionStore = (db: Database): AgentSessionStore => {
     },
     setLastSessionId(workspaceId, agentId, sessionId) {
       const updatedAt = Date.now()
+      const scope = fromSessionScopeId(workspaceId)
       const workerExists = Boolean(
         db
           .prepare('SELECT 1 FROM workers WHERE workspace_id = ? AND id = ?')
-          .get(workspaceId, agentId)
+          .get(scope.workspaceId, agentId)
       )
-      const isOrchestrator = agentId === `${workspaceId}:orchestrator`
+      const isOrchestrator = agentId === `${scope.workspaceId}:orchestrator`
       const workspaceExists =
         isOrchestrator &&
-        Boolean(db.prepare('SELECT 1 FROM workspaces WHERE id = ?').get(workspaceId))
+        Boolean(db.prepare('SELECT 1 FROM workspaces WHERE id = ?').get(scope.workspaceId))
       if (!workerExists && !workspaceExists) {
         lastSessionIds.delete(`${workspaceId}:${agentId}`)
         return
@@ -63,10 +65,10 @@ export const createAgentSessionStore = (db: Database): AgentSessionStore => {
              last_session_id = excluded.last_session_id,
              updated_at = excluded.updated_at`
         ).run(agentId, workspaceId, sessionId, updatedAt)
-        if (workerExists) {
+        if (workerExists && !scope.sessionId) {
           db.prepare(
             'UPDATE workers SET last_session_id = ? WHERE id = ? AND workspace_id = ?'
-          ).run(sessionId, agentId, workspaceId)
+          ).run(sessionId, agentId, scope.workspaceId)
         }
       })()
       lastSessionIds.set(`${workspaceId}:${agentId}`, sessionId)

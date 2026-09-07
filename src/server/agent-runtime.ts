@@ -23,7 +23,7 @@ export const createAgentRuntime = (
   agentRunStore: AgentRunStorePort,
   sessionStore: AgentSessionStorePort,
   getCommandPreset: (id: string) => CommandPresetRecord | undefined,
-  onAgentExit: (workspaceId: string, agentId: string) => void,
+  onAgentExit: (workspaceId: string, agentId: string, sessionId?: string) => void,
   restartPolicy: RestartPolicy = createNoopRestartPolicy(),
   getAgent?: (workspaceId: string, agentId: string) => AgentSummary | undefined,
   getPromptLanguage: () => PromptLanguage = () => 'zh'
@@ -101,13 +101,14 @@ export const createAgentRuntime = (
     peekAgentLaunchConfig(workspaceId, agentId) {
       return launchCache.peek(workspaceId, agentId)
     },
-    getActiveRunByAgentId(workspaceId, agentId) {
+    getActiveRunByAgentId(workspaceId, agentId, sessionId) {
       return getActiveRunByAgent(
         registry,
         launchCache.getWorkspaceId,
         syncRun,
         workspaceId,
-        agentId
+        agentId,
+        sessionId
       )
     },
     getLiveRun(runId) {
@@ -130,8 +131,14 @@ export const createAgentRuntime = (
     pauseRun(runId) {
       flowAdapter.pauseRun(runId)
     },
-    peekAgentToken(agentId) {
-      return tokenRegistry.peek(agentId)
+    peekAgentToken(agentId, sessionId) {
+      if (sessionId) return tokenRegistry.peek(`${sessionId}:${agentId}`)
+      const active = registry
+        .list()
+        .filter((run) => run.agentId === agentId)
+        .sort((left, right) => right.startedAt - left.startedAt)
+        .find((run) => run.status === 'starting' || run.status === 'running')
+      return tokenRegistry.peek(active?.sessionId ? `${active.sessionId}:${agentId}` : agentId)
     },
     resizeAgentRun(runId, cols, rows) {
       flowAdapter.resizeRun(runId, cols, rows)
@@ -145,13 +152,14 @@ export const createAgentRuntime = (
     async startAgent(workspace, agentId, input) {
       if (closing) throw new Error('Agent runtime is closing')
       launchCache.setWorkspaceId(agentId, workspace.id)
-      const key = getAgentKey(workspace.id, agentId)
+      const key = `${getAgentKey(workspace.id, agentId)}:${input.sessionId ?? 'legacy'}`
       const activeRun = getActiveRunByAgent(
         registry,
         launchCache.getWorkspaceId,
         syncRun,
         workspace.id,
-        agentId
+        agentId,
+        input.sessionId
       )
       if (activeRun) return activeRun
       const pendingStart = startPromises.get(key)
@@ -160,7 +168,8 @@ export const createAgentRuntime = (
         workspace,
         agentId,
         launchCache.get(workspace.id, agentId),
-        input.hivePort
+        input.hivePort,
+        input.sessionId
       ).finally(() => {
         if (startPromises.get(key) === startPromise) {
           startPromises.delete(key)
@@ -172,8 +181,15 @@ export const createAgentRuntime = (
     stopAgentRun(runId) {
       stopLiveRun(agentManager, registry, syncRun, runId)
     },
-    async stopAgentAndWait(workspaceId, agentId) {
-      const key = getAgentKey(workspaceId, agentId)
+    stopAgentAcrossSessions(workspaceId, agentId) {
+      for (const run of registry
+        .list()
+        .filter((item) => item.workspaceId === workspaceId && item.agentId === agentId)) {
+        stopLiveRun(agentManager, registry, syncRun, run.runId)
+      }
+    },
+    async stopAgentAndWait(workspaceId, agentId, sessionId) {
+      const key = `${getAgentKey(workspaceId, agentId)}:${sessionId ?? 'legacy'}`
       try {
         await startPromises.get(key)
       } catch {
@@ -184,35 +200,76 @@ export const createAgentRuntime = (
         launchCache.getWorkspaceId,
         syncRun,
         workspaceId,
-        agentId
+        agentId,
+        sessionId
       )
       if (!activeRun) return
       const exitEntry = registry.getExitEntry(activeRun.runId)
       stopLiveRun(agentManager, registry, syncRun, activeRun.runId)
       await exitEntry?.promise
     },
-    validateAgentToken: tokenRegistry.validate,
+    async stopSessionAndWait(workspaceId, sessionId) {
+      await Promise.allSettled([...startPromises.values()])
+      const runs = registry
+        .list()
+        .filter((run) => run.workspaceId === workspaceId && run.sessionId === sessionId)
+      await Promise.all(
+        runs.map(async (run) => {
+          const exitEntry = registry.getExitEntry(run.runId)
+          stopLiveRun(agentManager, registry, syncRun, run.runId)
+          await exitEntry?.promise
+        })
+      )
+    },
+    async stopWorkspaceAndWait(workspaceId) {
+      await Promise.allSettled([...startPromises.values()])
+      const runs = registry.list().filter((run) => run.workspaceId === workspaceId)
+      await Promise.all(
+        runs.map(async (run) => {
+          const exitEntry = registry.getExitEntry(run.runId)
+          stopLiveRun(agentManager, registry, syncRun, run.runId)
+          await exitEntry?.promise
+        })
+      )
+    },
+    validateAgentToken(agentId, token, sessionId) {
+      if (sessionId) return tokenRegistry.validate(`${sessionId}:${agentId}`, token)
+      if (tokenRegistry.validate(agentId, token)) return true
+      return registry
+        .list()
+        .filter((run) => run.agentId === agentId && run.sessionId)
+        .some((run) => tokenRegistry.validate(`${run.sessionId}:${agentId}`, token))
+    },
     writeReportPrompt(workspaceId, workerName, _workerId, text, artifacts, input = {}) {
       stdinDispatcher.writeReportPrompt(workspaceId, workerName, text, artifacts, input)
     },
     writeStatusPrompt(workspaceId, workerName, _workerId, text, artifacts, input = {}) {
       stdinDispatcher.writeStatusPrompt(workspaceId, workerName, text, artifacts, input)
     },
-    writeSendPrompt(workspaceId, workerId, dispatchId, fromAgentName, workerDescription, text) {
+    writeSendPrompt(
+      workspaceId,
+      workerId,
+      dispatchId,
+      fromAgentName,
+      workerDescription,
+      text,
+      sessionId
+    ) {
       stdinDispatcher.writeSendPrompt(
         workspaceId,
         workerId,
         dispatchId,
         fromAgentName,
         workerDescription,
-        text
+        text,
+        sessionId
       )
     },
     writeCancelPrompt(workspaceId, workerId, dispatchId, reason, input = {}) {
       stdinDispatcher.writeCancelPrompt(workspaceId, workerId, dispatchId, reason, input)
     },
-    writeUserInputPrompt(workspaceId, text) {
-      stdinDispatcher.writeUserInputPrompt(workspaceId, text)
+    writeUserInputPrompt(workspaceId, text, sessionId) {
+      stdinDispatcher.writeUserInputPrompt(workspaceId, text, sessionId)
     },
   }
 }
