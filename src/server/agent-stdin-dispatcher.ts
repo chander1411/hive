@@ -77,6 +77,7 @@ export const buildWorkerDispatchPayload = (
         '你必须遵守：',
         `- 完成、失败、阻塞或部分完成后，执行 \`team report "<result>" --dispatch ${dispatchId}\``,
         '- 不要做无关的事，做完就 report',
+        `- 这条 dispatch 是本消息中唯一的当前任务。不要继续或汇报其他会话的工作；只汇报 dispatch ${dispatchId}。`,
         '',
         `dispatch_id: ${dispatchId}`,
         '',
@@ -101,6 +102,9 @@ export const buildWorkerDispatchPayload = (
         language === 'es'
           ? '- No hagas trabajo ajeno; reporta al terminar'
           : '- Do not do unrelated work; report when finished',
+        language === 'es'
+          ? `- Este dispatch es la única tarea activa en este mensaje. No continúes ni reportes trabajo de sesiones anteriores; reporta solamente el dispatch ${dispatchId}.`
+          : `- This dispatch is the only active task in this message. Do not continue or report work from earlier sessions; report only dispatch ${dispatchId}.`,
         '',
         `dispatch_id: ${dispatchId}`,
         '',

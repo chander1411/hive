@@ -1,4 +1,12 @@
-import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -121,6 +129,7 @@ describe('POST /api/workspaces/:workspaceId/new-session', () => {
     await seedStore.close()
 
     const db = new Database(join(dataDir, 'runtime.sqlite'))
+    db.prepare('DELETE FROM workspace_sessions WHERE workspace_id = ?').run(workspace.id)
     const insertSession = db.prepare(
       'INSERT INTO agent_sessions (agent_id, workspace_id, last_session_id, updated_at) VALUES (?, ?, ?, ?)'
     )
@@ -152,6 +161,9 @@ describe('POST /api/workspaces/:workspaceId/new-session', () => {
     expect(initialSessions[0]).toMatchObject({ active: true, name: 'Session 1' })
     const firstSessionId = initialSessions[0]?.id
     expect(firstSessionId).toBeDefined()
+    mkdirSync(join(workspacePath, '.hive', 'sessions', firstSessionId as string), {
+      recursive: true,
+    })
     writeFileSync(
       join(workspacePath, getSessionTasksRelativePath(firstSessionId as string)),
       '- [ ] old task\n'
@@ -298,6 +310,84 @@ describe('POST /api/workspaces/:workspaceId/new-session', () => {
       { headers: { cookie }, method: 'DELETE' }
     )
     expect(deleteActiveResponse.status).toBe(409)
+  }, 15_000)
+
+  test('does not resume a previous worker conversation after restarting Hive in a new session', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'hive-new-session-restart-'))
+    const dataDir = join(root, 'data')
+    const workspacePath = join(root, 'workspace')
+    const launchLog = join(root, 'launches.jsonl')
+    const agentScript = join(root, 'agent.mjs')
+    tempDirs.push(root)
+    writeFileSync(
+      agentScript,
+      `#!/usr/bin/env node\nimport { appendFileSync } from 'node:fs'\nappendFileSync(${JSON.stringify(
+        launchLog
+      )}, JSON.stringify({ agentId: process.env.HIVE_AGENT_ID, args: process.argv.slice(2) }) + '\\n')\nsetInterval(() => {}, 1000)\n`
+    )
+    chmodSync(agentScript, 0o755)
+
+    const seedStore = createRuntimeStore({ dataDir })
+    const workspace = seedStore.createWorkspace(workspacePath, 'Alpha')
+    const orchestratorId = getOrchestratorId(workspace.id)
+    const worker = seedStore.addWorker(workspace.id, { name: 'Alice', role: 'coder' })
+    seedStore.configureAgentLaunch(workspace.id, orchestratorId, { command: agentScript })
+    seedStore.configureAgentLaunch(workspace.id, worker.id, {
+      command: agentScript,
+      resumeArgsTemplate: '--session {session_id}',
+      sessionIdCapture: { source: 'codex_session_jsonl_dir', pattern: '/missing' },
+    })
+    await seedStore.close()
+
+    const db = new Database(join(dataDir, 'runtime.sqlite'))
+    db.prepare(
+      'INSERT INTO agent_sessions (agent_id, workspace_id, last_session_id, updated_at) VALUES (?, ?, ?, ?)'
+    ).run(worker.id, workspace.id, 'worker-session-old', 1)
+    db.close()
+
+    const openServers: Array<Awaited<ReturnType<typeof startTestServer>>> = []
+    cleanup.push(async () => {
+      await Promise.all(openServers.splice(0).map((server) => server.close()))
+    })
+
+    const firstServer = await startTestServer({ dataDir })
+    openServers.push(firstServer)
+    const firstCookie = await getUiCookie(firstServer.baseUrl)
+    const sessionsResponse = await fetch(
+      `${firstServer.baseUrl}/api/workspaces/${workspace.id}/sessions`,
+      { headers: { cookie: firstCookie } }
+    )
+    expect(sessionsResponse.status).toBe(200)
+    const newSessionResponse = await fetch(
+      `${firstServer.baseUrl}/api/workspaces/${workspace.id}/new-session`,
+      { headers: { cookie: firstCookie }, method: 'POST' }
+    )
+    expect(newSessionResponse.status).toBe(201)
+    await firstServer.close()
+    openServers.splice(openServers.indexOf(firstServer), 1)
+
+    const secondServer = await startTestServer({ dataDir })
+    openServers.push(secondServer)
+    const workerRun = await secondServer.store.startAgent(workspace.id, worker.id, {
+      hivePort: '4010',
+    })
+    expect(workerRun.status).toBe('starting')
+    await waitFor(() => {
+      const launches = readFileSync(launchLog, 'utf8')
+        .trim()
+        .split('\n')
+        .map(
+          (line) =>
+            JSON.parse(line) as {
+              agentId: string
+              args: string[]
+            }
+        )
+      const workerLaunch = launches.find((launch) => launch.agentId === worker.id)
+      expect(workerLaunch).toBeDefined()
+      expect(workerLaunch?.args).not.toContain('--session')
+      expect(workerLaunch?.args).not.toContain('worker-session-old')
+    })
   }, 15_000)
 
   test('rejects an overlapping operation so only one replacement orchestrator starts', async () => {

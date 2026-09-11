@@ -74,4 +74,34 @@ describe('runtime prompt language', () => {
     expect(recovery).toContain('## Tareas pendientes')
     expect(`${startup}\n${recovery}`).not.toMatch(/[\u3400-\u9fff]/u)
   })
+
+  test.each([
+    ['en', 'Do not inspect the project', 'Do not run `team report` or `team status`'],
+    ['es', 'No inspecciones el proyecto', 'No ejecutes `team report` ni `team status`'],
+    ['zh', '启动时不要检查项目', '启动时不要执行 `team report` 或 `team status`'],
+  ] as const)('keeps a fresh %s worker idle until an explicit dispatch', (language, first, second) => {
+    const prompt = buildAgentStartupInstructions({
+      agent: coder,
+      workspace,
+      language,
+      newSession: true,
+      sessionId: 'session-new',
+    })
+
+    expect(prompt).toContain(first)
+    expect(prompt).toContain(second)
+    expect(prompt).toContain('session_id=session-new')
+  })
+
+  test('does not apply the new-session worker boundary when restoring an existing session', () => {
+    const prompt = buildAgentStartupInstructions({
+      agent: coder,
+      workspace,
+      language: 'es',
+      sessionId: 'session-existing',
+    })
+
+    expect(prompt).not.toContain('Límite de la sesión nueva:')
+    expect(prompt).not.toContain('No inspecciones el proyecto')
+  })
 })

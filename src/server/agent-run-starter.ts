@@ -58,13 +58,6 @@ export const createAgentRunStarter =
     const freshnessAgentId = sessionId ? `${sessionId}:${agentId}` : agentId
     const freshStart = isFreshStart(workspace.id, freshnessAgentId)
     const sessionWorkspaceId = toSessionScopeId(workspace.id, sessionId)
-    const scopedNativeSessionId = sessionStore.getLastSessionId(sessionWorkspaceId, agentId)
-    const legacyNativeSessionId = freshStart
-      ? undefined
-      : sessionStore.getLastSessionId(workspace.id, agentId)
-    if (sessionId && !scopedNativeSessionId && legacyNativeSessionId) {
-      sessionStore.setLastSessionId(sessionWorkspaceId, agentId, legacyNativeSessionId)
-    }
     const scopedSessionStore: AgentSessionStorePort = {
       clearLastSessionId: (_workspaceId, id) => {
         sessionStore.clearLastSessionId(sessionWorkspaceId, id)

@@ -133,6 +133,24 @@ export const buildAgentStartupInstructions = ({
         es ? 'Límites del worker de Hive:' : 'Hive worker boundaries:',
         ...getHiveTeamRules(agent, language)
       )
+      if (newSession) {
+        lines.push(
+          '',
+          es ? 'Límite de la sesión nueva:' : 'New session boundary:',
+          es
+            ? '- Esta es una conversación nueva y no tienes ninguna tarea asignada todavía.'
+            : '- This is a fresh conversation and you have no assigned task yet.',
+          es
+            ? '- Los archivos, el historial de Git y la memoria del proyecto son compartidos y pueden contener trabajo de otras sesiones; no representan una tarea activa.'
+            : '- Project files, Git history, and project memory are shared and may contain work from other sessions; they are not an active task.',
+          es
+            ? '- No inspecciones el proyecto, no continúes trabajo anterior y no reportes resultados de otras sesiones.'
+            : '- Do not inspect the project, continue previous work, or report results from other sessions.',
+          es
+            ? '- No ejecutes `team report` ni `team status` durante el inicio. Responde solamente `Listo.` y espera un dispatch explícito.'
+            : '- Do not run `team report` or `team status` during startup. Reply only `Ready.` and wait for an explicit dispatch.'
+        )
+      }
     }
     lines.push('')
     return lines.join('\n')
@@ -205,6 +223,16 @@ export const buildAgentStartupInstructions = ({
       'Hive worker 边界：',
       ...getHiveTeamRules(agent, language)
     )
+    if (newSession) {
+      lines.push(
+        '',
+        '新会话边界：',
+        '- 这是一个全新的对话，你目前没有收到任何派单。',
+        '- 项目文件、Git 历史和项目记忆是共享的，可能包含其他会话的工作；它们不是当前任务。',
+        '- 启动时不要检查项目、继续旧工作或汇报其他会话的结果。',
+        '- 启动时不要执行 `team report` 或 `team status`。只回复“已就绪。”并等待明确派单。'
+      )
+    }
   }
 
   lines.push('')

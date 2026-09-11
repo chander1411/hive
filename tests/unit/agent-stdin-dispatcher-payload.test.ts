@@ -90,6 +90,8 @@ describe('buildWorkerDispatchPayload', () => {
     expect(payload).toContain('[Mensaje del sistema Hive: tarea de @Orchestrator]')
     expect(payload).toContain('Tu rol: Eres un programador.')
     expect(payload).toContain('Debes cumplir:')
+    expect(payload).toContain('No continúes ni reportes trabajo de sesiones anteriores')
+    expect(payload).toContain('reporta solamente el dispatch disp-es')
     expect(payload).not.toMatch(/[\u3400-\u9fff]/u)
   })
 
@@ -104,6 +106,7 @@ describe('buildWorkerDispatchPayload', () => {
     expect(payload).toContain('你的角色：Coder — implements features')
     expect(payload).toContain('dispatch_id: disp-42')
     expect(payload).toContain('add error handling to login.ts')
+    expect(payload).toContain('只汇报 dispatch disp-42')
   })
 
   test('appends the worker reminder tail with the dispatch_id interpolated', () => {

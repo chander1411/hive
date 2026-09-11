@@ -72,6 +72,18 @@ export const createWorkspaceSessionOperations = (
     }
   }
 
+  const ensureActiveSession = (workspaceId: string) => {
+    const state = getCurrentState(workspaceId)
+    const session = services.workspaceSessionStore.ensureActiveSession(workspaceId, state)
+    const scopeId = toSessionScopeId(workspaceId, session.id)
+    for (const [agentId, nativeSessionId] of Object.entries(state.agentSessionIds)) {
+      if (!services.agentRuntime.getLastSessionId(scopeId, agentId)) {
+        services.agentRuntime.setLastSessionId(scopeId, agentId, nativeSessionId)
+      }
+    }
+    return { session, state }
+  }
+
   const executeNew = async (
     workspaceId: string,
     hivePort: string,
@@ -149,8 +161,7 @@ export const createWorkspaceSessionOperations = (
   return {
     ensureActiveSession(workspaceId: string) {
       const workspace = services.workspaceStore.getWorkspaceSnapshot(workspaceId)
-      const state = getCurrentState(workspaceId)
-      const session = services.workspaceSessionStore.ensureActiveSession(workspaceId, state)
+      const { session, state } = ensureActiveSession(workspaceId)
       services.tasksFileService.readSessionTasks(
         workspace.summary.path,
         session.id,
@@ -159,7 +170,7 @@ export const createWorkspaceSessionOperations = (
       return session
     },
     listSessions(workspaceId: string) {
-      services.workspaceSessionStore.ensureActiveSession(workspaceId, getCurrentState(workspaceId))
+      ensureActiveSession(workspaceId)
       return services.workspaceSessionStore.listSessions(workspaceId)
     },
     startNewSession: (workspaceId: string, hivePort: string, name?: string) =>
