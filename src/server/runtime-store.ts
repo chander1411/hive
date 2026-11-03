@@ -30,7 +30,7 @@ interface RuntimeStore {
   deleteWorkspaceSession: (workspaceId: string, sessionId: string) => Promise<void>
   startNewSession: (
     workspaceId: string,
-    input: StartAgentOptions & { name?: string }
+    input: StartAgentOptions & { autostartWorkers?: boolean; name?: string }
   ) => Promise<SessionActivationResult>
   switchWorkspaceSession: (
     workspaceId: string,
@@ -168,7 +168,12 @@ export const createRuntimeStore = (options: RuntimeStoreOptions = {}): RuntimeSt
     getActiveWorkspaceSessionId: activeSessionId,
     deleteWorkspaceSession: sessionOperations.deleteSession,
     startNewSession: (workspaceId, input) =>
-      sessionOperations.startNewSession(workspaceId, input.hivePort, input.name),
+      sessionOperations.startNewSession(
+        workspaceId,
+        input.hivePort,
+        input.name,
+        input.autostartWorkers
+      ),
     switchWorkspaceSession: (workspaceId, sessionId, input) =>
       sessionOperations.switchSession(workspaceId, sessionId, input.hivePort),
     deleteWorkspace: async (workspaceId) => {

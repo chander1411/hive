@@ -10,17 +10,12 @@ import { createAgentManager } from '../server/agent-manager.js'
 import { createApp } from '../server/app.js'
 import { readPackageVersion } from '../server/package-version.js'
 import { createRuntimeStore, type RuntimeStore } from '../server/runtime-store.js'
-import { createVersionService, type VersionService } from '../server/version-service.js'
 import { runHiveUpdateCommand } from './hive-update.js'
 
 interface RunHiveCommandResult {
   port: number
   close: () => Promise<void>
   store: RuntimeStore
-}
-
-type RunHiveCommandOptions = {
-  versionService?: VersionService
 }
 
 type ListenError = Error & {
@@ -85,14 +80,6 @@ const parsePort = (argv: string[]) => {
 
 const resolveDataDir = () => process.env.HIVE_DATA_DIR || join(homedir(), '.config', 'hive')
 
-const maybePrintUpdateHint = async (versionService: VersionService) => {
-  const info = await versionService.getVersionInfo()
-  if (!info.update_available) return
-  console.log(
-    `Hive update available: ${info.current_version} -> ${info.latest_version}. Run: ${info.install_hint}`
-  )
-}
-
 const isListenError = (error: unknown): error is ListenError =>
   error instanceof Error && typeof (error as ListenError).code === 'string'
 
@@ -118,19 +105,14 @@ const formatListenError = (error: unknown, requestedPort: number) => {
   return error
 }
 
-export const runHiveCommand = async (
-  argv: string[],
-  options: RunHiveCommandOptions = {}
-): Promise<RunHiveCommandResult> => {
+export const runHiveCommand = async (argv: string[]): Promise<RunHiveCommandResult> => {
   const port = parsePort(argv)
   const dataDir = resolveDataDir()
-  const versionService = options.versionService ?? createVersionService()
   const app = createApp({
     store: createRuntimeStore({
       agentManager: createAgentManager(),
       dataDir,
     }),
-    versionService,
   })
 
   try {
@@ -191,7 +173,6 @@ export const runHiveCommand = async (
   process.once('SIGINT', gracefulShutdown)
 
   console.log(`Hive running at http://127.0.0.1:${address.port}`)
-  void maybePrintUpdateHint(versionService).catch(() => {})
 
   return {
     port: address.port,

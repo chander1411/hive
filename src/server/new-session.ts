@@ -6,10 +6,18 @@ import { toSessionScopeId } from './session-scope.js'
 import type { WorkspaceSessionSummary } from './workspace-session-store.js'
 import { getOrchestratorId } from './workspace-store-support.js'
 
+export interface SessionWorkerStartResult {
+  agentId: string
+  error: string | null
+  ok: boolean
+  runId: string | null
+}
+
 export interface SessionActivationResult {
   archivedTasksPath: string | null
   run: LiveAgentRun
   session: WorkspaceSessionSummary
+  workerStarts: SessionWorkerStartResult[]
 }
 
 export const createWorkspaceSessionOperations = (
@@ -84,10 +92,49 @@ export const createWorkspaceSessionOperations = (
     return { session, state }
   }
 
+  const startSessionWorkers = async (
+    workspaceId: string,
+    hivePort: string,
+    sessionId: string,
+    agents: Array<{ id: string }>
+  ): Promise<SessionWorkerStartResult[]> => {
+    const starts = await Promise.all(
+      agents.map(async (agent): Promise<SessionWorkerStartResult | null> => {
+        if (!services.agentRuntime.peekAgentLaunchConfig(workspaceId, agent.id)) return null
+        const existingRun = services.agentRuntime.getActiveRunByAgentId(
+          workspaceId,
+          agent.id,
+          sessionId
+        )
+        if (existingRun) {
+          return { agentId: agent.id, error: null, ok: true, runId: existingRun.runId }
+        }
+        try {
+          const run = await startAgent(workspaceId, agent.id, { hivePort, sessionId })
+          return {
+            agentId: agent.id,
+            error: run.status === 'error' ? 'Agent failed to start' : null,
+            ok: run.status !== 'error',
+            runId: run.runId,
+          }
+        } catch (error) {
+          return {
+            agentId: agent.id,
+            error: error instanceof Error ? error.message : String(error),
+            ok: false,
+            runId: null,
+          }
+        }
+      })
+    )
+    return starts.filter((start): start is SessionWorkerStartResult => start !== null)
+  }
+
   const executeNew = async (
     workspaceId: string,
     hivePort: string,
-    name?: string
+    name?: string,
+    autostartWorkers = true
   ): Promise<SessionActivationResult> => {
     const workspace = services.workspaceStore.getWorkspaceSnapshot(workspaceId)
     const orchestratorId = getOrchestratorId(workspaceId)
@@ -106,12 +153,18 @@ export const createWorkspaceSessionOperations = (
     services.workspaceStore.resetAgentsForNewSession(workspaceId)
 
     const run = await startAgent(workspaceId, orchestratorId, { hivePort, sessionId: session.id })
+    const workerAgents = agents.filter((agent) => agent.id !== orchestratorId)
+    const workerStarts =
+      autostartWorkers && run.status !== 'error'
+        ? await startSessionWorkers(workspaceId, hivePort, session.id, workerAgents)
+        : []
     return {
       archivedTasksPath: archivedPath
         ? relative(workspace.summary.path, archivedPath).replaceAll('\\', '/')
         : null,
       run,
       session: { ...session, running: true },
+      workerStarts,
     }
   }
 
@@ -144,6 +197,7 @@ export const createWorkspaceSessionOperations = (
       archivedTasksPath: null,
       run,
       session: { ...target, active: true, running: true },
+      workerStarts: [],
     }
   }
 
@@ -173,8 +227,12 @@ export const createWorkspaceSessionOperations = (
       ensureActiveSession(workspaceId)
       return services.workspaceSessionStore.listSessions(workspaceId)
     },
-    startNewSession: (workspaceId: string, hivePort: string, name?: string) =>
-      runExclusive(workspaceId, () => executeNew(workspaceId, hivePort, name)),
+    startNewSession: (
+      workspaceId: string,
+      hivePort: string,
+      name?: string,
+      autostartWorkers?: boolean
+    ) => runExclusive(workspaceId, () => executeNew(workspaceId, hivePort, name, autostartWorkers)),
     switchSession: (workspaceId: string, sessionId: string, hivePort: string) =>
       runExclusive(workspaceId, () => executeSwitch(workspaceId, sessionId, hivePort)),
     async deleteSession(workspaceId: string, sessionId: string) {

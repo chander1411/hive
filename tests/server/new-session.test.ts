@@ -189,7 +189,7 @@ describe('POST /api/workspaces/:workspaceId/new-session', () => {
     await server.store.dispatchTask(workspace.id, worker.id, 'old delegated work')
 
     const response = await fetch(`${server.baseUrl}/api/workspaces/${workspace.id}/new-session`, {
-      body: JSON.stringify({ name: 'Planning' }),
+      body: JSON.stringify({ autostart_workers: false, name: 'Planning' }),
       headers: { cookie, 'content-type': 'application/json' },
       method: 'POST',
     })
@@ -360,7 +360,11 @@ describe('POST /api/workspaces/:workspaceId/new-session', () => {
     expect(sessionsResponse.status).toBe(200)
     const newSessionResponse = await fetch(
       `${firstServer.baseUrl}/api/workspaces/${workspace.id}/new-session`,
-      { headers: { cookie: firstCookie }, method: 'POST' }
+      {
+        body: JSON.stringify({ autostart_workers: false }),
+        headers: { cookie: firstCookie, 'content-type': 'application/json' },
+        method: 'POST',
+      }
     )
     expect(newSessionResponse.status).toBe(201)
     await firstServer.close()

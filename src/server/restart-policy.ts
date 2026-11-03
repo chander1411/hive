@@ -38,7 +38,7 @@ export const createRestartPolicy = ({
   getPromptLanguage = () => 'zh',
 }: RestartPolicyInput): RestartPolicy => ({
   injectPostStartMessage({ agentId, runId, sessionId, startConfig, workspace, writeToRun }) {
-    const previousRun = findPreviousRun(listAgentRuns(agentId), runId)
+    const previousRun = findPreviousRun(listAgentRuns(agentId), runId, sessionId)
     if (!previousRun) return false
 
     const snapshot = getWorkspaceSnapshot(workspace.id)

@@ -83,42 +83,6 @@ export const listWorkspaces = async (): Promise<WorkspaceSummary[]> => {
   return (await response.json()) as WorkspaceSummary[]
 }
 
-export interface VersionInfo {
-  currentVersion: string
-  installHint: string
-  latestVersion: string
-  packageName: string
-  releaseUrl: string
-  updateAvailable: boolean
-}
-
-interface VersionInfoPayload {
-  current_version: string
-  install_hint: string
-  latest_version: string
-  package_name: string
-  release_url: string
-  update_available: boolean
-}
-
-export const getVersionInfo = async (): Promise<VersionInfo> => {
-  const response = await apiFetch('/api/version')
-
-  if (!response.ok) {
-    throw new Error('Failed to load version info')
-  }
-
-  const payload = (await response.json()) as VersionInfoPayload
-  return {
-    currentVersion: payload.current_version,
-    installHint: payload.install_hint,
-    latestVersion: payload.latest_version,
-    packageName: payload.package_name,
-    releaseUrl: payload.release_url,
-    updateAvailable: payload.update_available,
-  }
-}
-
 export interface OrchestratorStartResult {
   ok: boolean
   error: string | null
@@ -295,6 +259,13 @@ export const listWorkspaceSessions = async (
   return body.map(parseWorkspaceSession)
 }
 
+export interface SessionWorkerStart {
+  agentId: string
+  error: string | null
+  ok: boolean
+  runId: string | null
+}
+
 export const startNewSession = async (
   workspaceId: string,
   name?: string
@@ -302,6 +273,7 @@ export const startNewSession = async (
   archivedTasksPath: string | null
   runId: string
   session: WorkspaceSessionSummary
+  workerStarts: SessionWorkerStart[]
 }> => {
   const response = await apiFetch(`/api/workspaces/${workspaceId}/new-session`, {
     body: JSON.stringify({ name: name?.trim() || undefined }),
@@ -315,11 +287,23 @@ export const startNewSession = async (
     archived_tasks_path: string | null
     run_id: string
     session: WorkspaceSessionPayload
+    worker_starts?: Array<{
+      agent_id: string
+      error: string | null
+      ok: boolean
+      run_id: string | null
+    }>
   }
   return {
     archivedTasksPath: body.archived_tasks_path,
     runId: body.run_id,
     session: parseWorkspaceSession(body.session),
+    workerStarts: (body.worker_starts ?? []).map((worker) => ({
+      agentId: worker.agent_id,
+      error: worker.error,
+      ok: worker.ok,
+      runId: worker.run_id,
+    })),
   }
 }
 

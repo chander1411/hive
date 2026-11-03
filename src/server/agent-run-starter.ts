@@ -145,7 +145,16 @@ export const createAgentRunStarter =
       workspaceId: workspace.id,
     }
     try {
-      store.insertAgentRun(run.runId, agentId, startedAt, run.pid, liveRun.status, liveRun.exitCode)
+      store.insertAgentRun(
+        run.runId,
+        agentId,
+        startedAt,
+        run.pid,
+        liveRun.status,
+        liveRun.exitCode,
+        null,
+        sessionId ?? null
+      )
     } catch (error) {
       abortedRunIds.add(run.runId)
       registry.clearPendingExitCode(run.runId)
@@ -182,19 +191,18 @@ export const createAgentRunStarter =
     )
     queueMicrotask(() => {
       try {
-        const injectedRestartMessage = freshStart
-          ? false
-          : restartPolicy.injectPostStartMessage({
-              agentId,
-              runId: run.runId,
-              sessionId,
-              startConfig,
-              workspace,
-              writeToRun: postStartWriter,
-            })
+        if (!freshStart) {
+          restartPolicy.injectPostStartMessage({
+            agentId,
+            runId: run.runId,
+            sessionId,
+            startConfig,
+            workspace,
+            writeToRun: postStartWriter,
+          })
+        }
         if (
           !startConfig.resumedSessionId &&
-          !injectedRestartMessage &&
           agent &&
           isInteractiveAgentCommand(startConfig.interactiveCommand ?? startConfig.command)
         ) {

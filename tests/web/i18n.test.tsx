@@ -8,15 +8,6 @@ import { Topbar } from '../../web/src/layout/Topbar.js'
 import { UI_LANGUAGE_STORAGE_KEY } from '../../web/src/uiLanguage.js'
 import { WelcomePane } from '../../web/src/worker/WelcomePane.js'
 
-const versionInfo = {
-  currentVersion: '0.6.0-alpha.5',
-  installHint: 'npm install -g @tt-a1i/hive@latest',
-  latestVersion: '0.6.0-alpha.5',
-  packageName: '@tt-a1i/hive',
-  releaseUrl: 'https://www.npmjs.com/package/@tt-a1i/hive',
-  updateAvailable: false,
-}
-
 beforeEach(() => {
   window.localStorage.clear()
 })
@@ -31,7 +22,7 @@ describe('UI language switcher', () => {
   test('cycles through Spanish and Chinese and persists the choice', () => {
     render(
       <AppProviders>
-        <Topbar version="0.6.0-alpha.5" versionInfo={versionInfo} />
+        <Topbar version="0.6.0-alpha.5" />
         <WelcomePane onAddWorkspace={() => {}} />
       </AppProviders>
     )
@@ -55,7 +46,7 @@ describe('UI language switcher', () => {
     })
     render(
       <AppProviders>
-        <Topbar version="0.6.0-alpha.5" versionInfo={versionInfo} />
+        <Topbar version="0.6.0-alpha.5" />
         <WelcomePane onAddWorkspace={() => {}} />
       </AppProviders>
     )

@@ -83,6 +83,9 @@ describe('schema version', () => {
     expect(db.prepare('SELECT version FROM schema_version WHERE version = ?').get(19)).toEqual({
       version: 19,
     })
+    expect(db.prepare('SELECT version FROM schema_version WHERE version = ?').get(20)).toEqual({
+      version: 20,
+    })
     db.close()
   })
 
@@ -137,6 +140,7 @@ describe('schema version', () => {
     expect(workerColumns.has('last_session_id')).toBe(true)
     expect(agentRunColumns.has('pid')).toBe(true)
     expect(agentRunColumns.has('ended_at')).toBe(true)
+    expect(agentRunColumns.has('session_id')).toBe(true)
     expect(launchConfigColumns.has('command_preset_id')).toBe(true)
     expect(launchConfigColumns.has('interactive_command')).toBe(true)
     expect(launchConfigColumns.has('preset_augmentation_disabled')).toBe(true)
@@ -206,6 +210,45 @@ describe('schema version', () => {
     expect(roleTemplateCount.count).toBe(4)
     expect(appState).toEqual({ key: 'active_workspace_id', value: null })
 
+    db.close()
+  })
+
+  test('adds agent_runs.session_id even when schema_version is already ahead', () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'hive-schema-ahead-session-id-'))
+    tempDirs.push(dataDir)
+
+    const db = new Database(join(dataDir, 'runtime.sqlite'))
+    db.exec(`
+      CREATE TABLE schema_version (
+        version INTEGER PRIMARY KEY,
+        applied_at INTEGER NOT NULL
+      );
+
+      CREATE TABLE agent_runs (
+        run_id TEXT PRIMARY KEY,
+        agent_id TEXT NOT NULL,
+        pid INTEGER,
+        status TEXT NOT NULL,
+        exit_code INTEGER,
+        started_at INTEGER NOT NULL,
+        ended_at INTEGER,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+    `)
+    const insertVersion = db.prepare(
+      'INSERT INTO schema_version (version, applied_at) VALUES (?, ?)'
+    )
+    for (let version = 1; version <= 40; version += 1) insertVersion.run(version, version)
+
+    initializeRuntimeDatabase(db)
+
+    const columns = new Set(
+      (db.prepare('PRAGMA table_info(agent_runs)').all() as Array<{ name: string }>).map(
+        (column) => column.name
+      )
+    )
+    expect(columns.has('session_id')).toBe(true)
     db.close()
   })
 

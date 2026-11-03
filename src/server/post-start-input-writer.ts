@@ -5,6 +5,7 @@ import type { AgentManager } from './agent-manager.js'
 const INTERACTIVE_COMMANDS = new Set(['claude', 'codex', 'gemini', 'opencode'])
 const READY_CHECK_INTERVAL_MS = 50
 const READY_TIMEOUT_MS = 3000
+const OPENCODE_READY_TIMEOUT_MS = 15_000
 const MIN_SUBMIT_AFTER_PASTE_DELAY_MS = 600
 const MAX_SUBMIT_AFTER_PASTE_DELAY_MS = 1500
 const PASTE_CHARS_PER_DELAY_MS = 4
@@ -27,12 +28,14 @@ export const isInteractiveAgentCommand = (command: string) =>
 const getCommandName = (command: string) => basename(command).toLowerCase()
 
 const hasGeminiPromptReady = (output: string) => /\bType your message\b/u.test(output)
+const hasOpenCodePromptReady = (output: string) => /Ask anything\b/iu.test(output)
 
 export const hasInteractivePromptReady = (output: string, command = '') => {
   const commandName = getCommandName(command)
   return (
     /(?:^|[\r\n])\s*[❯›]\s*/u.test(output) ||
-    (commandName === 'gemini' && hasGeminiPromptReady(output))
+    (commandName === 'gemini' && hasGeminiPromptReady(output)) ||
+    (commandName === 'opencode' && hasOpenCodePromptReady(output))
   )
 }
 
@@ -43,6 +46,8 @@ const isClaudeCommand = (command: string) => getCommandName(command) === 'claude
 const usesBracketedPaste = (command: string) =>
   COMMANDS_WITH_BRACKETED_PASTE.has(getCommandName(command))
 const canTimeoutBeforePromptReady = (command: string) => getCommandName(command) !== 'gemini'
+const getReadyTimeoutMs = (command: string) =>
+  getCommandName(command) === 'opencode' ? OPENCODE_READY_TIMEOUT_MS : READY_TIMEOUT_MS
 const isWritableRunStatus = (status: string | undefined) =>
   status === undefined || status === 'starting' || status === 'running'
 
@@ -137,7 +142,8 @@ export const createPostStartInputWriter = (
       if (output === null) return
       if (
         hasInteractivePromptReady(output, command) ||
-        (canTimeoutBeforePromptReady(command) && Date.now() - startedAt >= READY_TIMEOUT_MS)
+        (canTimeoutBeforePromptReady(command) &&
+          Date.now() - startedAt >= getReadyTimeoutMs(command))
       ) {
         const baselineLength = output.length
         const input = usesBracketedPaste(command) ? toBracketedPasteSubmission(text) : text

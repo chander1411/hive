@@ -11,7 +11,8 @@ export interface AgentRunStorePort {
     pid: number | null,
     status?: PersistedRunStatus,
     exitCode?: number | null,
-    endedAt?: number | null
+    endedAt?: number | null,
+    sessionId?: string | null
   ) => void
   listAgentRuns: (agentId: string) => PersistedAgentRun[]
   listLaunchConfigs: () => Array<{

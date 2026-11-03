@@ -17,7 +17,53 @@ describe('post-start input writer', () => {
     expect(
       hasInteractivePromptReady('Gemini CLI\n* Type your message or @path/to/file', 'gemini')
     ).toBe(true)
+    expect(
+      hasInteractivePromptReady('OpenCode\nAsk anything… "Fix a TODO in the codebase"', 'opencode')
+    ).toBe(true)
     expect(hasInteractivePromptReady('booting only')).toBe(false)
+  })
+
+  test('waits for OpenCode prompt readiness instead of the generic startup timeout', () => {
+    vi.useFakeTimers()
+    let output = 'OpenCode is starting'
+    const manager = {
+      getRun: vi.fn(() => ({ output, status: 'running' })),
+      writeInput: vi.fn(),
+    }
+
+    const write = createPostStartInputWriter(manager as never, 'opencode')
+    write('run-1', 'payload')
+
+    vi.advanceTimersByTime(3000)
+    expect(manager.writeInput).not.toHaveBeenCalled()
+
+    output = 'OpenCode\nAsk anything… "Fix a TODO in the codebase"'
+    vi.advanceTimersByTime(50)
+
+    expect(manager.writeInput).toHaveBeenCalledTimes(1)
+    expect(manager.writeInput).toHaveBeenNthCalledWith(1, 'run-1', '\u001b[200~payload\u001b[201~')
+
+    vi.advanceTimersByTime(600)
+    expect(manager.writeInput).toHaveBeenCalledTimes(2)
+    expect(manager.writeInput).toHaveBeenNthCalledWith(2, 'run-1', '\r')
+  })
+
+  test('falls back after the extended OpenCode readiness timeout', () => {
+    vi.useFakeTimers()
+    const manager = {
+      getRun: vi.fn(() => ({ output: 'OpenCode is starting', status: 'running' })),
+      writeInput: vi.fn(),
+    }
+
+    const write = createPostStartInputWriter(manager as never, 'opencode')
+    write('run-1', 'payload')
+
+    vi.advanceTimersByTime(14_999)
+    expect(manager.writeInput).not.toHaveBeenCalled()
+
+    vi.advanceTimersByTime(1)
+    expect(manager.writeInput).toHaveBeenCalledTimes(1)
+    expect(manager.writeInput).toHaveBeenNthCalledWith(1, 'run-1', '\u001b[200~payload\u001b[201~')
   })
 
   test('recognizes Claude bracketed-paste acknowledgements after the baseline output', () => {

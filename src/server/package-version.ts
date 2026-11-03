@@ -5,10 +5,8 @@ import { fileURLToPath } from 'node:url'
 export const PACKAGE_NAME = '@tt-a1i/hive'
 
 /**
- * Canonical argv for the upgrade command. Sharing one source between the
- * server's install hint (`version-service.ts`) and the CLI upgrade path
- * (`hive-update.ts`) keeps the two from drifting if the package name ever
- * moves.
+ * Canonical argv for the upgrade command. Keep the CLI upgrade path
+ * (`hive-update.ts`) in sync if the package name ever moves.
  */
 export const INSTALL_COMMAND_ARGS = ['install', '-g', `${PACKAGE_NAME}@latest`] as const
 

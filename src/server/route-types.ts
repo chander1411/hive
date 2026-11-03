@@ -8,7 +8,6 @@ import type {
 } from './open-target-commands.js'
 import type { RuntimeStore } from './runtime-store.js'
 import type { TasksFileService } from './tasks-file.js'
-import type { VersionService } from './version-service.js'
 
 export interface SendTaskBody {
   hive_port?: string
@@ -92,7 +91,6 @@ export interface RouteContext {
   tasksFileService: TasksFileService
   pickFolderService: () => Promise<PickFolderResponse>
   openWorkspaceService: OpenWorkspaceService
-  versionService: VersionService
   params: Record<string, string>
 }
 

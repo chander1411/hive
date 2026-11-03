@@ -14,8 +14,9 @@ import { applySchemaVersion16 } from './sqlite-schema-v16.js'
 import { applySchemaVersion17 } from './sqlite-schema-v17.js'
 import { applySchemaVersion18 } from './sqlite-schema-v18.js'
 import { applySchemaVersion19 } from './sqlite-schema-v19.js'
+import { applySchemaVersion20 } from './sqlite-schema-v20.js'
 
-export const CURRENT_SCHEMA_VERSION = 19
+export const CURRENT_SCHEMA_VERSION = 20
 
 export const initializeRuntimeDatabase = (db: Database) => {
   db.exec(`
@@ -270,5 +271,12 @@ export const initializeRuntimeDatabase = (db: Database) => {
   if (!appliedVersions.has(19)) {
     applySchemaVersion19(db)
     db.prepare('INSERT INTO schema_version (version, applied_at) VALUES (?, ?)').run(19, Date.now())
+  }
+
+  // Run unconditionally: databases written by a newer build can already record
+  // version 20+ without having this column, and re-adding it is idempotent.
+  applySchemaVersion20(db)
+  if (!appliedVersions.has(20)) {
+    db.prepare('INSERT INTO schema_version (version, applied_at) VALUES (?, ?)').run(20, Date.now())
   }
 }

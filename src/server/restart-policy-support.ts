@@ -16,8 +16,12 @@ export interface RestartPolicyInput {
   getPromptLanguage?: () => PromptLanguage
 }
 
-export const findPreviousRun = (runs: PersistedAgentRun[], currentRunId: string) =>
-  runs.find((run) => run.runId !== currentRunId)
+export const findPreviousRun = (
+  runs: PersistedAgentRun[],
+  currentRunId: string,
+  sessionId?: string
+) =>
+  runs.find((run) => run.runId !== currentRunId && (run.sessionId ?? null) === (sessionId ?? null))
 
 export const writeSystemMessage = ({
   deleteMessage,

@@ -20,6 +20,7 @@ export interface PersistedAgentRun {
   status: 'starting' | 'running' | 'exited' | 'error'
   exitCode: number | null
   pid: number | null
+  sessionId: string | null
   startedAt: number
   endedAt: number | null
 }
@@ -62,6 +63,7 @@ interface AgentRunRow {
   pid: number | null
   status: 'starting' | 'running' | 'exited' | 'error'
   exit_code: number | null
+  session_id: string | null
   started_at: number
   ended_at: number | null
 }
@@ -167,15 +169,27 @@ export const createAgentRunStore = (db: Database) => {
     pid: number | null,
     status: PersistedAgentRun['status'] = 'starting',
     exitCode: number | null = null,
-    endedAt: number | null = null
+    endedAt: number | null = null,
+    sessionId: string | null = null
   ) => {
     if (closed) {
       return
     }
     db.prepare(
-      `INSERT INTO agent_runs (run_id, agent_id, pid, status, exit_code, started_at, ended_at, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    ).run(runId, agentId, pid, status, exitCode, startedAt, endedAt, startedAt, startedAt)
+      `INSERT INTO agent_runs (run_id, agent_id, pid, status, exit_code, session_id, started_at, ended_at, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(
+      runId,
+      agentId,
+      pid,
+      status,
+      exitCode,
+      sessionId,
+      startedAt,
+      endedAt,
+      startedAt,
+      startedAt
+    )
   }
 
   const updatePersistedRun = (
@@ -199,7 +213,7 @@ export const createAgentRunStore = (db: Database) => {
 
     return db
       .prepare(
-        'SELECT run_id, agent_id, pid, status, exit_code, started_at, ended_at FROM agent_runs WHERE agent_id = ? ORDER BY started_at DESC'
+        'SELECT run_id, agent_id, pid, status, exit_code, session_id, started_at, ended_at FROM agent_runs WHERE agent_id = ? ORDER BY started_at DESC'
       )
       .all(agentId)
       .map((row: unknown) => {
@@ -210,6 +224,7 @@ export const createAgentRunStore = (db: Database) => {
           pid: typedRow.pid,
           status: typedRow.status,
           exitCode: typedRow.exit_code,
+          sessionId: typedRow.session_id,
           startedAt: typedRow.started_at,
           endedAt: typedRow.ended_at,
         }

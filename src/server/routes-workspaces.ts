@@ -116,17 +116,25 @@ export const workspaceRoutes: RouteDefinition[] = [
       const hasBody =
         Number(request.headers['content-length'] ?? 0) > 0 ||
         request.headers['transfer-encoding'] !== undefined
-      const body = hasBody ? await readJsonBody<{ name?: unknown }>(request) : {}
+      const body = hasBody
+        ? await readJsonBody<{ autostart_workers?: unknown; name?: unknown }>(request)
+        : {}
       const name = typeof body.name === 'string' ? body.name.trim() : ''
       if (name.length > 120) {
         sendJson(response, 400, { error: 'Session name must be 120 characters or fewer' })
         return
       }
+      if (body.autostart_workers !== undefined && typeof body.autostart_workers !== 'boolean') {
+        sendJson(response, 400, { error: 'autostart_workers must be a boolean' })
+        return
+      }
+      const autostartWorkers = body.autostart_workers !== false
       const orchestratorId = getOrchestratorId(workspaceId)
       if (!store.peekAgentLaunchConfig(workspaceId, orchestratorId)) {
         seedOrchestratorLaunchConfig(store, store.settings, workspaceId)
       }
       const result = await store.startNewSession(workspaceId, {
+        autostartWorkers,
         hivePort: getRuntimePort(request),
         ...(name ? { name } : {}),
       })
@@ -134,6 +142,12 @@ export const workspaceRoutes: RouteDefinition[] = [
         archived_tasks_path: result.archivedTasksPath,
         run_id: result.run.runId,
         session: serializeWorkspaceSession(result.session),
+        worker_starts: result.workerStarts.map((worker) => ({
+          agent_id: worker.agentId,
+          error: worker.error,
+          ok: worker.ok,
+          run_id: worker.runId,
+        })),
       })
     }
   ),

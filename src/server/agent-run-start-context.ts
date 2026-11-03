@@ -14,7 +14,8 @@ export interface AgentRunStarterStorePort {
     pid: number | null,
     status?: PersistedRunStatus,
     exitCode?: number | null,
-    endedAt?: number | null
+    endedAt?: number | null,
+    sessionId?: string | null
   ) => void
   updatePersistedRun: (
     runId: string,
