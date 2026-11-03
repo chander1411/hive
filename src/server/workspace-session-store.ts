@@ -57,8 +57,6 @@ type DispatchSnapshot = {
   to_agent_id: string
 }
 
-const parseJson = <T>(value: string): T => JSON.parse(value) as T
-
 const toSummary = (row: WorkspaceSessionRow): WorkspaceSessionSummary => ({
   active: row.active === 1,
   createdAt: row.created_at,
@@ -247,8 +245,21 @@ export const createWorkspaceSessionStore = (db: Database) => {
     },
     getState(workspaceId: string, sessionId: string): WorkspaceSessionState {
       const row = getRow(workspaceId, sessionId)
+      const agentSessionRows = db
+        .prepare(
+          'SELECT agent_id, last_session_id FROM agent_sessions WHERE workspace_id = ? ORDER BY agent_id'
+        )
+        .all(toSessionScopeId(workspaceId, sessionId)) as Array<{
+        agent_id: string
+        last_session_id: string
+      }>
       return {
-        agentSessionIds: parseJson<Record<string, string>>(row.agent_session_ids_json),
+        agentSessionIds: Object.fromEntries(
+          agentSessionRows.map((agentSession) => [
+            agentSession.agent_id,
+            agentSession.last_session_id,
+          ])
+        ),
         tasksContent: row.tasks_content,
       }
     },

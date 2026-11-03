@@ -12,6 +12,7 @@ import type { CommandPresetRecord } from './command-preset-store.js'
 import { withoutSessionResumeArgs, withPresetResumeArgs } from './preset-launch-support.js'
 import {
   captureSessionIdForCapture,
+  doesCapturedSessionExist,
   findExistingSessionIdForCapture,
   getSessionCaptureEnvironment,
   type SessionCaptureSnapshot,
@@ -88,12 +89,29 @@ export const buildAgentRunBootstrap = (
 ) => {
   const preset = resolveLaunchPreset(config, getCommandPreset)
   const discriminator = createSessionCaptureDiscriminator(workspace, agent, hiveSessionId)
-  const storedSessionId = freshStart
+  const capture = config.sessionIdCapture ?? preset?.sessionIdCapture
+  let storedSessionId = freshStart
     ? undefined
     : sessionStore.getLastSessionId(workspace.id, agentId)
   let lastSessionId = storedSessionId
+  const storedDiscriminator = storedSessionId
+    ? createStoredSessionDiscriminator(workspace, agent, hiveSessionId)
+    : undefined
+  const verifiableStoredSession =
+    capture?.source === 'claude_project_jsonl_dir' || capture?.source === 'opencode_session_db'
+  if (
+    storedSessionId &&
+    !freshStart &&
+    capture &&
+    verifiableStoredSession &&
+    storedDiscriminator &&
+    !doesCapturedSessionExist(workspace.path, capture, storedSessionId, storedDiscriminator)
+  ) {
+    sessionStore.clearLastSessionId(workspace.id, agentId)
+    storedSessionId = undefined
+    lastSessionId = undefined
+  }
   if (!lastSessionId && !freshStart) {
-    const capture = config.sessionIdCapture ?? preset?.sessionIdCapture
     lastSessionId = findExistingSessionIdForCapture(workspace.path, capture, discriminator)
     if (lastSessionId) sessionStore.setLastSessionId(workspace.id, agentId, lastSessionId)
   }

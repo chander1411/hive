@@ -1,6 +1,6 @@
 import type { AgentRuntime } from './agent-runtime.js'
 import type { DispatchRecord } from './dispatch-ledger-store.js'
-import { ConflictError, PtyInactiveError } from './http-errors.js'
+import { ConflictError } from './http-errors.js'
 import type { MessageLogHandle, MessageLogRecord } from './message-log-store.js'
 import {
   createReportMessage,
@@ -263,22 +263,16 @@ export const createTeamOperations = ({
       const status = input.status
       const artifacts = input.artifacts ?? []
       const worker = workspaceStore.getWorker(workspaceId, workerId)
-      if (
-        input.requireActiveRun === true &&
-        !agentRuntime.getActiveRunByAgentId(
-          workspaceId,
-          `${workspaceId}:orchestrator`,
-          input.sessionId
-        )
-      ) {
-        throw new PtyInactiveError(`No active run for agent: ${workspaceId}:orchestrator`)
-      }
       const openDispatch = findOpenDispatch(scopeId, workerId, input.dispatchId)
-      if (!openDispatch && input.dispatchId) {
-        throw new ConflictError(`No open dispatch for worker: ${worker.name}`)
-      }
       if (!openDispatch) {
-        throw new ConflictError(`No open dispatch for worker: ${worker.name}`)
+        const fallback = findOpenDispatch(scopeId, workerId)
+        throw new ConflictError(
+          fallback
+            ? `No open dispatch for worker: ${worker.name}${
+                input.dispatchId ? ` (dispatch ${input.dispatchId})` : ''
+              }. Open dispatch: ${fallback.id}`
+            : `No open dispatch for worker: ${worker.name}`
+        )
       }
       const messageHandle = insertMessage({
         ...createReportMessage(workspaceId, workerId, text, status, artifacts),

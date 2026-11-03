@@ -63,6 +63,8 @@ export interface ListDispatchesOptions {
   status?: DispatchStatus
 }
 
+const DISPATCH_ID_PREFIX = /^[0-9a-f-]{8,36}$/i
+
 const parseArtifacts = (value: string | null) => {
   if (!value) return []
   try {
@@ -157,6 +159,22 @@ export const createDispatchLedgerStore = (db: Database) => {
 
   const findOpenDispatch = (workspaceId: string, toAgentId: string, dispatchId?: string) => {
     if (dispatchId) {
+      const normalizedId = dispatchId.trim()
+      if (DISPATCH_ID_PREFIX.test(normalizedId)) {
+        const rows = db
+          .prepare(
+            `SELECT *
+             FROM dispatches
+             WHERE workspace_id = ?
+               AND to_agent_id = ?
+               AND status IN ('queued', 'submitted')
+               AND id LIKE ?
+             ORDER BY sequence ASC
+             LIMIT 2`
+          )
+          .all(workspaceId, toAgentId, `${normalizedId.toLowerCase()}%`) as DispatchRow[]
+        return rows.length === 1 && rows[0] ? toRecord(rows[0]) : undefined
+      }
       const row = db
         .prepare(
           `SELECT *
@@ -167,7 +185,7 @@ export const createDispatchLedgerStore = (db: Database) => {
              AND status IN ('queued', 'submitted')
            LIMIT 1`
         )
-        .get(dispatchId, workspaceId, toAgentId) as DispatchRow | undefined
+        .get(normalizedId, workspaceId, toAgentId) as DispatchRow | undefined
 
       return row ? toRecord(row) : undefined
     }
@@ -188,6 +206,21 @@ export const createDispatchLedgerStore = (db: Database) => {
   }
 
   const findOpenDispatchById = (workspaceId: string, dispatchId: string) => {
+    const normalizedId = dispatchId.trim()
+    if (DISPATCH_ID_PREFIX.test(normalizedId)) {
+      const rows = db
+        .prepare(
+          `SELECT *
+           FROM dispatches
+           WHERE workspace_id = ?
+             AND status IN ('queued', 'submitted')
+             AND id LIKE ?
+           ORDER BY sequence ASC
+           LIMIT 2`
+        )
+        .all(workspaceId, `${normalizedId.toLowerCase()}%`) as DispatchRow[]
+      return rows.length === 1 && rows[0] ? toRecord(rows[0]) : undefined
+    }
     const row = db
       .prepare(
         `SELECT *
@@ -197,7 +230,7 @@ export const createDispatchLedgerStore = (db: Database) => {
            AND status IN ('queued', 'submitted')
          LIMIT 1`
       )
-      .get(dispatchId, workspaceId) as DispatchRow | undefined
+      .get(normalizedId, workspaceId) as DispatchRow | undefined
 
     return row ? toRecord(row) : undefined
   }

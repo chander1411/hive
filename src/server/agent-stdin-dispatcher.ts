@@ -80,6 +80,7 @@ export const buildWorkerDispatchPayload = (
         `- 这条 dispatch 是本消息中唯一的当前任务。不要继续或汇报其他会话的工作；只汇报 dispatch ${dispatchId}。`,
         '',
         `dispatch_id: ${dispatchId}`,
+        '- 使用完整的 dispatch_id，不要缩写。',
         '',
         '任务内容：',
         text,
@@ -107,6 +108,9 @@ export const buildWorkerDispatchPayload = (
           : `- This dispatch is the only active task in this message. Do not continue or report work from earlier sessions; report only dispatch ${dispatchId}.`,
         '',
         `dispatch_id: ${dispatchId}`,
+        language === 'es'
+          ? '- Usa el dispatch_id completo; no lo acortes.'
+          : '- Use the full dispatch_id exactly as shown; do not shorten it.',
         '',
         language === 'es' ? 'Tarea:' : 'Task:',
         text,

@@ -6,6 +6,15 @@ import Database from 'better-sqlite3'
 
 import { captureSessionIdWithCoordinator } from './claude-session-coordinator.js'
 
+type ContentDiscriminator = { contentIncludes: string | readonly string[] }
+
+const toMarkers = (discriminator: ContentDiscriminator | undefined) =>
+  discriminator
+    ? Array.isArray(discriminator.contentIncludes)
+      ? discriminator.contentIncludes
+      : [discriminator.contentIncludes]
+    : []
+
 const expandHome = (path: string) =>
   path === '~' || path.startsWith('~/') ? join(homedir(), path.slice(2)) : path
 
@@ -39,8 +48,46 @@ const listSessionIds = (cwd: string, dbPath = getDefaultOpenCodeDbPath()) => {
   }
 }
 
-export const hasOpenCodeSession = (cwd: string, sessionId: string, pattern?: string) =>
-  listSessionIds(cwd, getOpenCodeDbPath(pattern)).includes(sessionId)
+const sessionContainsMarkers = (dbPath: string, sessionId: string, markers: readonly string[]) => {
+  if (markers.length === 0 || !existsSync(dbPath)) return false
+  let db: Database.Database | undefined
+  try {
+    db = new Database(dbPath, { fileMustExist: true, readonly: true })
+    const statement = db.prepare('SELECT 1 FROM part WHERE session_id = ? AND data LIKE ? LIMIT 1')
+    return markers.some((marker) => statement.get(sessionId, `%${marker}%`) !== undefined)
+  } catch {
+    return false
+  } finally {
+    db?.close()
+  }
+}
+
+export const hasOpenCodeSession = (
+  cwd: string,
+  sessionId: string,
+  pattern?: string,
+  discriminator?: ContentDiscriminator
+) => {
+  const dbPath = getOpenCodeDbPath(pattern)
+  if (!listSessionIds(cwd, dbPath).includes(sessionId)) return false
+  const markers = toMarkers(discriminator)
+  return markers.length === 0 || sessionContainsMarkers(dbPath, sessionId, markers)
+}
+
+export const findOpenCodeSessionId = (
+  cwd: string,
+  pattern?: string,
+  discriminator?: ContentDiscriminator
+) => {
+  const markers = toMarkers(discriminator)
+  if (markers.length === 0) return undefined
+  const dbPath = getOpenCodeDbPath(pattern)
+  const sessionIds = listSessionIds(cwd, dbPath)
+  for (const sessionId of sessionIds.reverse()) {
+    if (sessionContainsMarkers(dbPath, sessionId, markers)) return sessionId
+  }
+  return undefined
+}
 
 export const snapshotOpenCodeSessionIds = (cwd: string, dbPath = getDefaultOpenCodeDbPath()) =>
   new Set(listSessionIds(cwd, dbPath))
@@ -51,8 +98,10 @@ export const captureOpenCodeSessionId = async (
   onCapture: (sessionId: string) => void,
   timeoutMs = 5000,
   intervalMs = 100,
-  dbPath = getDefaultOpenCodeDbPath()
+  dbPath = getDefaultOpenCodeDbPath(),
+  discriminator?: ContentDiscriminator
 ) => {
+  const markers = toMarkers(discriminator)
   await captureSessionIdWithCoordinator({
     intervalMs,
     knownSessionIds,
@@ -60,5 +109,11 @@ export const captureOpenCodeSessionId = async (
     onCapture,
     projectKey: `${dbPath}:${cwd}`,
     timeoutMs,
+    ...(markers.length > 0
+      ? {
+          matchesSessionId: (sessionId: string) =>
+            sessionContainsMarkers(dbPath, sessionId, markers),
+        }
+      : {}),
   })
 }

@@ -44,7 +44,7 @@ export const getOrchestratorReminderTail = (language: PromptLanguage = 'en') =>
  */
 export const buildWorkerReminderTail = (dispatchId: string) =>
   '<hive-system-reminder>\n' +
-  `You are a Hive Worker. Do not launch nested CLI subagents (Task / Explore / etc.) — finish the task yourself. When the task is done, blocked, or has failed, report with: \`team report "<result>" --dispatch ${dispatchId}\` (or \`team report --stdin --dispatch ${dispatchId}\` for long bodies).\n` +
+  `You are a Hive Worker. Do not launch nested CLI subagents (Task / Explore / etc.) — finish the task yourself. When the task is done, blocked, or has failed, report with: \`team report "<result>" --dispatch ${dispatchId}\` (or \`team report --stdin --dispatch ${dispatchId}\` for long bodies). Use the full dispatch id exactly as shown; do not shorten it.\n` +
   '</hive-system-reminder>'
 
 export const buildLocalizedWorkerReminderTail = (
@@ -54,8 +54,8 @@ export const buildLocalizedWorkerReminderTail = (
   if (language === 'en') return buildWorkerReminderTail(dispatchId)
   const body =
     language === 'es'
-      ? `Eres un Worker de Hive. No inicies subagentes del CLI. Completa la tarea personalmente y, al terminar, bloquearte o fallar, reporta con: \`team report "<result>" --dispatch ${dispatchId}\` (o \`team report --stdin --dispatch ${dispatchId}\` para textos largos).`
-      : `你是 Hive Worker。不要启动 CLI 内置子代理；请自行完成任务。完成、阻塞或失败后，使用 \`team report "<result>" --dispatch ${dispatchId}\` 汇报（长正文使用 \`team report --stdin --dispatch ${dispatchId}\`）。`
+      ? `Eres un Worker de Hive. No inicies subagentes del CLI. Completa la tarea personalmente y, al terminar, bloquearte o fallar, reporta con: \`team report "<result>" --dispatch ${dispatchId}\` (o \`team report --stdin --dispatch ${dispatchId}\` para textos largos). Usa el dispatch id completo; no lo acortes.`
+      : `你是 Hive Worker。不要启动 CLI 内置子代理；请自行完成任务。完成、阻塞或失败后，使用 \`team report "<result>" --dispatch ${dispatchId}\` 汇报（长正文使用 \`team report --stdin --dispatch ${dispatchId}\`）。使用完整的 dispatch_id，不要缩写。`
   return `<hive-system-reminder>\n${body}\n</hive-system-reminder>`
 }
 

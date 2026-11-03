@@ -190,7 +190,12 @@ const sessionId = sessionIndex >= 0 ? args[sessionIndex + 1] : 'ses_25c8f572effe
 const expectYoloMarker = process.cwd() + '/.expect-yolo'
 const db = new Database(process.env.HIVE_OPENCODE_DB_PATH)
 db.exec('CREATE TABLE IF NOT EXISTS session (id TEXT PRIMARY KEY, directory TEXT NOT NULL, time_archived INTEGER)')
+db.exec('CREATE TABLE IF NOT EXISTS part (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT NOT NULL, data TEXT NOT NULL)')
 db.prepare('INSERT OR REPLACE INTO session (id, directory, time_archived) VALUES (?, ?, NULL)').run(sessionId, process.cwd())
+if (process.env.HIVE_PROJECT_ID && process.env.HIVE_AGENT_ID && process.env.HIVE_SESSION_ID) {
+  const marker = 'Hive session binding: workspace_id=' + process.env.HIVE_PROJECT_ID + '; agent_id=' + process.env.HIVE_AGENT_ID + '; session_id=' + process.env.HIVE_SESSION_ID
+  db.prepare('INSERT INTO part (session_id, data) VALUES (?, ?)').run(sessionId, JSON.stringify({ type: 'text', text: marker }))
+}
 db.close()
 process.stdout.write('ARGS:' + args.join(' ') + '\\n')
 if (existsSync(process.cwd() + '/.expect-resume') && !(args.includes('--session') && args.includes(sessionId))) process.exit(2)
