@@ -7,6 +7,7 @@ import { withPresetResumeArgs } from '../../src/server/claude-session-support.js
 import {
   captureClaudeSessionId,
   encodeClaudeProjectPath,
+  findClaudeSessionId,
   hasClaudeSessionFile,
   resetClaudeSessionClaimsForTests,
   snapshotClaudeSessionIds,
@@ -41,6 +42,27 @@ afterEach(() => {
 describe('claude session support', () => {
   test('encodeClaudeProjectPath handles Windows separators', () => {
     expect(encodeClaudeProjectPath('C:\\Users\\admin\\project')).toBe('C--Users-admin-project')
+  })
+
+  test('encodeClaudeProjectPath matches Claude for underscores and punctuation', () => {
+    expect(encodeClaudeProjectPath('/Users/demo/movil_runachay/app.v2')).toBe(
+      '-Users-demo-movil-runachay-app-v2'
+    )
+  })
+
+  test('findClaudeSessionId recovers the newest session with the exact Hive binding', () => {
+    const root = createTempRoot()
+    const cwd = '/tmp/project_with_underscore'
+    const oldSessionId = '11111111-1111-4111-8111-111111111111'
+    const selectedSessionId = '22222222-2222-4222-8222-222222222222'
+    writeSession(root, cwd, oldSessionId, 'Hive session binding: session_id=old\n')
+    writeSession(root, cwd, selectedSessionId, 'Hive session binding: session_id=selected\n')
+
+    expect(
+      findClaudeSessionId(cwd, presetCapture.pattern, {
+        contentIncludes: 'Hive session binding: session_id=selected',
+      })
+    ).toBe(selectedSessionId)
   })
 
   test('snapshotClaudeSessionIds returns an empty set when the project directory is missing', () => {

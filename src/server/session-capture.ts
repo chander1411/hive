@@ -1,5 +1,6 @@
 import {
   captureClaudeSessionId,
+  findClaudeSessionId,
   getClaudeProjectsRoot,
   hasClaudeSessionFile,
   snapshotClaudeSessionIds,
@@ -107,6 +108,15 @@ export const snapshotSessionIdsForCapture = (
 export const getSessionCaptureEnvironment = (
   snapshot: SessionCaptureSnapshot | undefined
 ): Record<string, string> => snapshot?.env ?? {}
+
+export const findExistingSessionIdForCapture = (
+  cwd: string,
+  capture: SessionIdCaptureConfig | null | undefined,
+  discriminator?: SessionCaptureSnapshot['discriminator']
+) => {
+  if (capture?.source !== 'claude_project_jsonl_dir' || !discriminator) return undefined
+  return findClaudeSessionId(cwd, capture.pattern, discriminator)
+}
 
 export const captureSessionIdForCapture = async (
   cwd: string,

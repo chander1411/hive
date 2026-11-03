@@ -12,6 +12,7 @@ import type { CommandPresetRecord } from './command-preset-store.js'
 import { withoutSessionResumeArgs, withPresetResumeArgs } from './preset-launch-support.js'
 import {
   captureSessionIdForCapture,
+  findExistingSessionIdForCapture,
   getSessionCaptureEnvironment,
   type SessionCaptureSnapshot,
   snapshotSessionIdsForCapture,
@@ -57,10 +58,21 @@ const createSessionCaptureDiscriminator = (
 ) => {
   if (!agent) return undefined
   return {
-    contentIncludes: [
-      buildAgentSessionBindingMarker({ agent, sessionId: hiveSessionId, workspace }),
-      buildAgentLegacyIdentityMarker({ agent, workspace }),
-    ],
+    contentIncludes: hiveSessionId
+      ? buildAgentSessionBindingMarker({ agent, sessionId: hiveSessionId, workspace })
+      : buildAgentLegacyIdentityMarker({ agent, workspace }),
+  }
+}
+
+const createStoredSessionDiscriminator = (
+  workspace: WorkspaceSummary,
+  agent: AgentSummary | undefined,
+  hiveSessionId?: string
+) => {
+  const exact = createSessionCaptureDiscriminator(workspace, agent, hiveSessionId)
+  if (!agent || !hiveSessionId || !exact) return exact
+  return {
+    contentIncludes: [exact.contentIncludes, buildAgentLegacyIdentityMarker({ agent, workspace })],
   }
 }
 
@@ -76,12 +88,23 @@ export const buildAgentRunBootstrap = (
 ) => {
   const preset = resolveLaunchPreset(config, getCommandPreset)
   const discriminator = createSessionCaptureDiscriminator(workspace, agent, hiveSessionId)
+  const storedSessionId = freshStart
+    ? undefined
+    : sessionStore.getLastSessionId(workspace.id, agentId)
+  let lastSessionId = storedSessionId
+  if (!lastSessionId && !freshStart) {
+    const capture = config.sessionIdCapture ?? preset?.sessionIdCapture
+    lastSessionId = findExistingSessionIdForCapture(workspace.path, capture, discriminator)
+    if (lastSessionId) sessionStore.setLastSessionId(workspace.id, agentId, lastSessionId)
+  }
   const startConfig = withPresetResumeArgs(
     freshStart ? withoutSessionResumeArgs(config) : config,
     preset,
-    sessionStore.getLastSessionId(workspace.id, agentId),
+    lastSessionId,
     workspace.path,
-    discriminator,
+    storedSessionId
+      ? createStoredSessionDiscriminator(workspace, agent, hiveSessionId)
+      : discriminator,
     () => sessionStore.clearLastSessionId(workspace.id, agentId)
   )
   const sessionCaptureSnapshot = startConfig.resumedSessionId

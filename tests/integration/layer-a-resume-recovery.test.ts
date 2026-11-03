@@ -8,12 +8,14 @@ import {
   writeFileSync,
 } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 
 import Database from 'better-sqlite3'
 import { afterEach, describe, expect, test } from 'vitest'
 
+import { createRuntimeStore } from '../../src/server/runtime-store.js'
 import { getClaudeSessionFilePath } from '../../src/server/session-capture-claude.js'
+import { toSessionScopeId } from '../../src/server/session-scope.js'
 import { startTestServer } from '../helpers/test-server.js'
 import { getUiCookie } from '../helpers/ui-session.js'
 
@@ -64,7 +66,7 @@ import { join } from 'node:path'
 const args = process.argv.slice(2)
 const sessionIndex = args.indexOf('--session-id-test')
 const sessionId = sessionIndex >= 0 ? args[sessionIndex + 1] : '11111111-1111-4111-8111-111111111111'
-const encoded = process.cwd().replace(/[\\/:\\s]/g, '-')
+const encoded = process.cwd().replace(/[^a-zA-Z0-9-]/g, '-')
 const projectsRoot = process.env.HIVE_CLAUDE_PROJECTS_DIR ?? join(homedir(), '.claude', 'projects')
 const projectDir = join(projectsRoot, encoded)
 const failMarker = join(process.cwd(), '.fail-next-resume')
@@ -150,6 +152,110 @@ afterEach(() => {
 })
 
 describe('Layer A resume recovery integration', () => {
+  test('resumes a stored pre-session Claude conversation through its legacy agent marker', async () => {
+    const homeDir = mkdtempSync(join(tmpdir(), 'hive-layer-a-legacy-bound-'))
+    const dataDir = join(homeDir, 'data')
+    const workspacePathRaw = join(homeDir, 'workspace')
+    tempDirs.push(homeDir)
+    mkdirSync(workspacePathRaw, { recursive: true })
+    const workspacePath = realpathSync(workspacePathRaw)
+    process.env.HIVE_CLAUDE_PROJECTS_DIR = join(homeDir, '.claude', 'projects')
+    const nativeSessionId = '55555555-5555-4555-8555-555555555555'
+    const hiveSessionId = 'legacy-hive-session'
+    const fakeClaude = writeFakeClaude(workspacePath)
+
+    const seedStore = createRuntimeStore({ dataDir })
+    const workspace = seedStore.createWorkspace(workspacePath, 'Alpha')
+    const worker = seedStore.addWorker(workspace.id, { name: 'Alice', role: 'coder' })
+    seedStore.configureAgentLaunch(workspace.id, worker.id, {
+      command: fakeClaude,
+      args: ['--dangerously-skip-permissions', '--session-id-test', nativeSessionId],
+      resumeArgsTemplate: '--resume {session_id}',
+      sessionIdCapture: {
+        pattern: '~/.claude/projects/{encoded_cwd}/*.jsonl',
+        source: 'claude_project_jsonl_dir',
+      },
+    })
+    await seedStore.close()
+
+    const sessionPath = getClaudeSessionFilePath(workspacePath, nativeSessionId)
+    mkdirSync(dirname(sessionPath), { recursive: true })
+    writeFileSync(sessionPath, '你是 Alpha 的 Alice（coder）。\n')
+    const db = new Database(join(dataDir, 'runtime.sqlite'))
+    db.prepare(
+      'INSERT INTO agent_sessions (agent_id, workspace_id, last_session_id, updated_at) VALUES (?, ?, ?, ?)'
+    ).run(worker.id, toSessionScopeId(workspace.id, hiveSessionId), nativeSessionId, Date.now())
+    db.close()
+
+    const server = await startTestServer({ dataDir })
+    try {
+      const cookie = await getUiCookie(server.baseUrl)
+      const run = await server.store.startAgent(workspace.id, worker.id, {
+        hivePort: '4010',
+        sessionId: hiveSessionId,
+      })
+      await waitFor(async () => {
+        const state = await getRunOutputViaHttp(server.baseUrl, cookie, run.runId)
+        expect(state.output).toContain(`--resume ${nativeSessionId}`)
+      })
+    } finally {
+      await server.close()
+    }
+  })
+
+  test('recovers a scoped Claude session from its exact Hive binding when SQLite lost the id', async () => {
+    const homeDir = mkdtempSync(join(tmpdir(), 'hive-layer-a-bound-recovery-'))
+    const workspacePathRaw = join(homeDir, 'workspace_with_underscore')
+    tempDirs.push(homeDir)
+    mkdirSync(workspacePathRaw, { recursive: true })
+    const workspacePath = realpathSync(workspacePathRaw)
+    process.env.HIVE_CLAUDE_PROJECTS_DIR = join(homeDir, '.claude', 'projects')
+
+    const server = await startTestServer()
+    try {
+      const cookie = await getUiCookie(server.baseUrl)
+      const workspace = await createWorkspaceViaHttp(server.baseUrl, cookie, workspacePath)
+      const worker = await createWorkerViaHttp(server.baseUrl, cookie, workspace.id)
+      const hiveSessionId = 'hive-session-selected'
+      const nativeSessionId = '44444444-4444-4444-8444-444444444444'
+      const fakeClaude = writeFakeClaude(workspacePath)
+      const sessionPath = getClaudeSessionFilePath(workspacePath, nativeSessionId)
+      mkdirSync(dirname(sessionPath), { recursive: true })
+      writeFileSync(
+        sessionPath,
+        `Hive session binding: workspace_id=${workspace.id}; agent_id=${worker.id}; session_id=${hiveSessionId}\n`
+      )
+
+      server.store.configureAgentLaunch(workspace.id, worker.id, {
+        command: fakeClaude,
+        args: ['--dangerously-skip-permissions', '--session-id-test', nativeSessionId],
+        resumeArgsTemplate: '--resume {session_id}',
+        sessionIdCapture: {
+          pattern: '~/.claude/projects/{encoded_cwd}/*.jsonl',
+          source: 'claude_project_jsonl_dir',
+        },
+      })
+
+      const run = await server.store.startAgent(workspace.id, worker.id, {
+        hivePort: '4010',
+        sessionId: hiveSessionId,
+      })
+      await waitFor(async () => {
+        const state = await getRunOutputViaHttp(server.baseUrl, cookie, run.runId)
+        expect(state.output).toContain(`--resume ${nativeSessionId}`)
+      })
+      expect(
+        readLastSessionId(
+          server.dataDir,
+          `${workspace.id}::hive-session::${hiveSessionId}`,
+          worker.id
+        )
+      ).toBe(nativeSessionId)
+    } finally {
+      await server.close()
+    }
+  })
+
   test('T1 happy path: captured Claude session id is reused on restart', async () => {
     const homeDir = mkdtempSync(join(tmpdir(), 'hive-layer-a-home-'))
     const workspacePathRaw = join(homeDir, 'workspace')

@@ -1,4 +1,4 @@
-import { existsSync, readdirSync, readFileSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
@@ -25,7 +25,7 @@ export const getClaudeProjectsRoot = (pattern?: string) => {
   return root
 }
 
-export const encodeClaudeProjectPath = (cwd: string) => cwd.replace(/[\\/:\s]/g, '-')
+export const encodeClaudeProjectPath = (cwd: string) => cwd.replace(/[^a-zA-Z0-9-]/g, '-')
 
 const listSessionIds = (cwd: string, projectsRoot = getDefaultProjectsRoot()) => {
   const projectDir = join(projectsRoot, encodeClaudeProjectPath(cwd))
@@ -84,6 +84,30 @@ export const hasClaudeSessionFile = (
   return discriminator.contentIncludes
     ? sessionFileContainsAny(cwd, projectsRoot, sessionId, discriminator.contentIncludes)
     : true
+}
+
+export const findClaudeSessionId = (
+  cwd: string,
+  pattern?: string,
+  discriminator: ClaudeSessionCaptureDiscriminator = {}
+) => {
+  if (!discriminator.contentIncludes) return undefined
+  const projectsRoot = getClaudeProjectsRoot(pattern)
+  const projectDir = join(projectsRoot, encodeClaudeProjectPath(cwd))
+  return listSessionIds(cwd, projectsRoot)
+    .filter((sessionId) =>
+      sessionFileContainsAny(
+        cwd,
+        projectsRoot,
+        sessionId,
+        discriminator.contentIncludes as string | readonly string[]
+      )
+    )
+    .map((sessionId) => ({
+      modifiedAt: statSync(join(projectDir, `${sessionId}.jsonl`)).mtimeMs,
+      sessionId,
+    }))
+    .sort((left, right) => right.modifiedAt - left.modifiedAt)[0]?.sessionId
 }
 
 export const captureClaudeSessionId = async (

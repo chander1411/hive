@@ -259,7 +259,7 @@ describe('POST /api/workspaces/:workspaceId/new-session', () => {
     expect(server.store.listWorkers(workspace.id)[0]).toMatchObject({
       id: worker.id,
       pendingTaskCount: 1,
-      status: 'working',
+      status: 'idle',
     })
 
     const restoredWorkerRun = await server.store.startAgent(workspace.id, worker.id, {

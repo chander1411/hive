@@ -245,15 +245,24 @@ export const createRuntimeStore = (options: RuntimeStoreOptions = {}): RuntimeSt
         .listWorkspaceDispatches(scopeId, { limit: 10_000 })
         .filter((dispatch) => dispatch.status === 'queued' || dispatch.status === 'submitted')
       return services.workspaceStore.listWorkers(workspaceId).map((worker) => {
-        const pendingTaskCount = openDispatches.filter(
+        const workerDispatches = openDispatches.filter(
           (dispatch) => dispatch.toAgentId === worker.id
-        ).length
+        )
+        const pendingTaskCount = workerDispatches.length
         const run = services.agentRuntime.getActiveRunByAgentId(workspaceId, worker.id, sessionId)
+        const dispatchedToActiveRun = run
+          ? workerDispatches.some(
+              (dispatch) =>
+                dispatch.status === 'submitted' &&
+                dispatch.submittedAt !== null &&
+                dispatch.submittedAt >= run.startedAt
+            )
+          : false
         return {
           ...worker,
           pendingTaskCount,
           status: run
-            ? pendingTaskCount > 0
+            ? dispatchedToActiveRun
               ? 'working'
               : 'idle'
             : pendingTaskCount > 0 && worker.status !== 'stopped'

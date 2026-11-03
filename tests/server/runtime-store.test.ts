@@ -199,6 +199,9 @@ describe('runtime store', () => {
     // pendingTaskCount stays so WorkerModal / recovery summary can still surface
     // the backlog — the status field just doesn't read from it anymore.
     expect(updatedWorker.pendingTaskCount).toBe(1)
+    expect(store.listWorkers(workspace.id)).toContainEqual(
+      expect.objectContaining({ id: worker.id, pendingTaskCount: 1, status: 'idle' })
+    )
   })
 
   test('startAgent transitions a stopped worker with pending backlog to idle (restart path)', async () => {
